@@ -1,0 +1,10 @@
+{
+  "name": "video-collab-board",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check dist/domain.js && node --check dist/store.js && node --check dist/adapters.js && node --check dist/app.js"
+  }
+}
