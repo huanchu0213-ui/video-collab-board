@@ -11,11 +11,11 @@ export const USERS = [
   { id: "u_admin", name: "储焕", role: "admin", avatar: "储" }
 ];
 
-const templateOffsets = {
-  S: [144, 72, 48, 32, 0],
-  A: [96, 48, 32, 24, 0],
-  B: [48, 24, 0, 12, 0],
-  C: [24, 12, 0, 6, 0]
+const templateIntervals = {
+  S: [48, 72, 24, 24, 24],
+  A: [36, 48, 16, 16, 12],
+  B: [24, 24, 0, 12, 8],
+  C: [12, 12, 0, 6, 4]
 };
 
 function makeTemplates() {
@@ -23,12 +23,12 @@ function makeTemplates() {
     STAGES.WAITING_MATERIAL, STAGES.EDITING, STAGES.INITIAL_REVIEW,
     STAGES.DIRECTOR_REVIEW, STAGES.READY_PUBLISH
   ];
-  return Object.entries(templateOffsets).map(([level, values]) => ({
+  return Object.entries(templateIntervals).map(([level, values]) => ({
     level,
     name: `${level}级演示草案`,
     confirmed: false,
     includeShoot: true,
-    offsets: Object.fromEntries(order.map((stage, index) => [stage, values[index]])),
+    intervals: Object.fromEntries(order.map((stage, index) => [stage, values[index]])),
     updatedAt: null,
     confirmedBy: null
   }));
@@ -67,6 +67,10 @@ function baseTask(partial, index) {
     scriptUrl: "https://example.com/script",
     materialUrl: partial.materialUrl || "",
     versions: partial.versions || [],
+    scheduleIntervals: Object.fromEntries([
+      STAGES.WAITING_MATERIAL, STAGES.EDITING, STAGES.INITIAL_REVIEW,
+      STAGES.DIRECTOR_REVIEW, STAGES.READY_PUBLISH
+    ].map((stage, intervalIndex) => [stage, templateIntervals[partial.level][intervalIndex]])),
     deadlines,
     stageStartedAt: isoFromNow(-18 - index),
     createdAt: isoFromNow(-48 - index * 3),
@@ -111,7 +115,7 @@ function seedTasks() {
 
 export function defaultState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 1,
     currentUserId: "u_director_zhou",
     activeView: "todo",
@@ -133,7 +137,7 @@ export function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
-    if (parsed.schemaVersion !== 1) return defaultState();
+    if (parsed.schemaVersion !== 2) return defaultState();
     return parsed;
   } catch {
     return defaultState();

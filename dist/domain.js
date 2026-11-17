@@ -68,6 +68,14 @@ export const TEMPLATE_STAGE_ORDER = [
   STAGES.READY_PUBLISH
 ];
 
+export const TEMPLATE_INTERVAL_LABELS = {
+  [STAGES.WAITING_MATERIAL]: "认领后 → 素材确认",
+  [STAGES.EDITING]: "素材确认 → 剪辑交付",
+  [STAGES.INITIAL_REVIEW]: "剪辑交付 → 中台初审",
+  [STAGES.DIRECTOR_REVIEW]: "上级确认 → 编导审核",
+  [STAGES.READY_PUBLISH]: "编导审核 → 视频发布"
+};
+
 export function makeId(prefix = "id") {
   if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID()}`;
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -76,40 +84,36 @@ export function makeId(prefix = "id") {
 export function validateTemplate(template) {
   const errors = [];
   if (!template || !LEVELS.includes(template.level)) errors.push("视频等级无效");
-  const offsets = template?.offsets || {};
+  const intervals = template?.intervals || {};
   const required = TEMPLATE_STAGE_ORDER.filter((stage) => stage !== STAGES.INITIAL_REVIEW || ["S", "A"].includes(template?.level));
   for (const stage of required) {
-    const value = Number(offsets[stage]);
+    const value = Number(intervals[stage]);
     if (!Number.isFinite(value) || value < 0) errors.push(`${STAGE_META[stage].label}需填写非负小时数`);
   }
-  let previous = Infinity;
-  for (const stage of required) {
-    const current = Number(offsets[stage]);
-    if (!Number.isFinite(current)) continue;
-    if (current > previous) errors.push(`${STAGE_META[stage].label}不能早于上一节点`);
-    previous = current;
-  }
-  if (Number(offsets[STAGES.READY_PUBLISH]) !== 0) errors.push("待发布节点必须设置为发布前 0 小时");
   return { valid: errors.length === 0, errors };
 }
 
-export function buildDeadlines(publishAt, template, { needsShoot = true } = {}) {
+export function buildDeadlines(publishAt, template, { needsShoot = true, startAt = new Date() } = {}) {
   const validation = validateTemplate(template);
-  if (!template?.confirmed) throw new Error(`${template?.level || "该等级"}倒排模板尚未确认`);
+  if (!template?.confirmed) throw new Error(`${template?.level || "该等级"}节点间隔模板尚未确认`);
   if (!validation.valid) throw new Error(validation.errors.join("；"));
   const publishTime = new Date(publishAt).getTime();
   if (!Number.isFinite(publishTime)) throw new Error("计划发布时间无效");
+  let cursor = new Date(startAt).getTime();
+  if (!Number.isFinite(cursor)) throw new Error("排期起始时间无效");
   const deadlines = {};
-  for (const stage of TEMPLATE_STAGE_ORDER) {
-    if (stage === STAGES.INITIAL_REVIEW && !["S", "A"].includes(template.level)) continue;
-    deadlines[stage] = new Date(publishTime - Number(template.offsets[stage]) * 3600000).toISOString();
-  }
+  const setNext = (stage, intervalStage = stage) => {
+    cursor += Number(template.intervals[intervalStage]) * 3600000;
+    deadlines[stage] = new Date(cursor).toISOString();
+  };
+  setNext(STAGES.WAITING_MATERIAL);
   deadlines[STAGES.WAITING_CLAIM] = deadlines[STAGES.WAITING_MATERIAL];
   if (needsShoot) deadlines[STAGES.WAITING_SHOOT] = deadlines[STAGES.WAITING_MATERIAL];
-  const reviewOffset = Number(template.offsets[STAGES.DIRECTOR_REVIEW]);
-  const readyOffset = Number(template.offsets[STAGES.READY_PUBLISH]);
-  const modifyOffset = readyOffset + (reviewOffset - readyOffset) / 2;
-  deadlines[STAGES.MODIFYING] = new Date(publishTime - modifyOffset * 3600000).toISOString();
+  setNext(STAGES.EDITING);
+  if (["S", "A"].includes(template.level)) setNext(STAGES.INITIAL_REVIEW);
+  setNext(STAGES.DIRECTOR_REVIEW);
+  deadlines[STAGES.MODIFYING] = new Date(cursor + Number(template.intervals[STAGES.EDITING]) * 3600000).toISOString();
+  setNext(STAGES.READY_PUBLISH);
   deadlines[STAGES.PUBLISHED] = new Date(publishTime).toISOString();
   return deadlines;
 }
@@ -170,7 +174,8 @@ export function createTask(input, actor, templates, now = new Date()) {
     scriptUrl: input.scriptUrl || "",
     materialUrl: "",
     versions: [],
-    deadlines: buildDeadlines(input.publishAt, template, { needsShoot }),
+    scheduleIntervals: structuredClone(template.intervals),
+    deadlines: buildDeadlines(input.publishAt, template, { needsShoot, startAt: now }),
     stageStartedAt: new Date(now).toISOString(),
     createdAt: new Date(now).toISOString(),
     updatedAt: new Date(now).toISOString(),
@@ -197,6 +202,13 @@ function move(task, toStage, actor, action, now, payload = {}) {
   next.currentStage = toStage;
   next.stageStartedAt = new Date(now).toISOString();
   next.updatedAt = new Date(now).toISOString();
+  const intervalStage = toStage === STAGES.MODIFYING ? STAGES.EDITING : toStage;
+  const interval = Number(next.scheduleIntervals?.[intervalStage]);
+  const shouldKeepMaterialDeadline = toStage === STAGES.WAITING_MATERIAL && task.currentStage === STAGES.WAITING_SHOOT;
+  if (Number.isFinite(interval) && !shouldKeepMaterialDeadline) {
+    next.deadlines[toStage] = new Date(new Date(now).getTime() + interval * 3600000).toISOString();
+    next.scheduleRisk = new Date(next.deadlines[toStage]).getTime() > new Date(next.publishAt).getTime();
+  }
   if (toStage === STAGES.PUBLISHED) next.completedAt = new Date(now).toISOString();
   next.events.push(eventFor({ ...task, currentStage: from }, action, actor, now, { ...payload, toStage }));
   return next;
@@ -298,7 +310,8 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
       const template = payload.templates?.find((item) => item.level === task.level);
       const next = structuredClone(task);
       next.publishAt = new Date(payload.publishAt).toISOString();
-      next.deadlines = buildDeadlines(payload.publishAt, template, { needsShoot: task.needsShoot });
+      next.scheduleIntervals = structuredClone(template.intervals);
+      next.deadlines = buildDeadlines(payload.publishAt, template, { needsShoot: task.needsShoot, startAt: now });
       next.updatedAt = new Date(now).toISOString();
       next.events.push(eventFor(task, action, actor, now, { note: payload.note, metadata: { publishAt: next.publishAt } }));
       return next;
@@ -417,7 +430,7 @@ export function migrateLegacyTask(legacy, templates, now = new Date()) {
   const template = templates.find((item) => item.level === legacy.level);
   let deadlines = {};
   let needsConfirmation = false;
-  try { deadlines = buildDeadlines(legacy.publishAt, template, { needsShoot: legacy.needsShoot !== false }); }
+  try { deadlines = buildDeadlines(legacy.publishAt, template, { needsShoot: legacy.needsShoot !== false, startAt: legacy.updatedAt || now }); }
   catch { needsConfirmation = true; }
   return {
     ...legacy,
@@ -428,6 +441,7 @@ export function migrateLegacyTask(legacy, templates, now = new Date()) {
     reminderEnabled: !archived && !needsConfirmation,
     migrationNeedsConfirmation: needsConfirmation,
     deadlines,
+    scheduleIntervals: template?.intervals ? structuredClone(template.intervals) : {},
     stageStartedAt: legacy.updatedAt || new Date(now).toISOString(),
     events: legacy.events || []
   };

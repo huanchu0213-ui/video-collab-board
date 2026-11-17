@@ -1,5 +1,5 @@
 import {
-  ACTIONS, LEVELS, STAGES, STAGE_META, TEMPLATE_STAGE_ORDER,
+  ACTIONS, LEVELS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
   applyAction, canAct, createTask, deadlineForCurrentStage, evaluateReminders,
   getResponsible, taskBucket, validateTemplate
 } from "./domain.js";
@@ -261,12 +261,12 @@ function renderAdmin() {
   const allReady = state.templates.every((template) => template.confirmed && validateTemplate(template).valid);
   return renderShell(`
     <section class="admin-intro">
-      <div><span class="eyebrow">WORKFLOW CONTROL</span><h2>先确认业务排期，再开启自动催办。</h2><p>模板中的小时数均表示“距离计划发布时间还有多少小时”。系统不会把演示草案直接用于生产。</p></div>
+      <div><span class="eyebrow">WORKFLOW CONTROL</span><h2>按节点间隔配置，而不是从发布时间倒排。</h2><p>每个小时数表示“前一节点确认后，到下一节点确认前”的最长处理时间。</p></div>
       <div class="readiness ${allReady ? "ready" : "pending"}"><span>${allReady ? "✓" : state.templates.filter((item) => item.confirmed).length}</span><div><strong>${allReady ? "模板已就绪" : `已确认 ${state.templates.filter((item) => item.confirmed).length}/4`}</strong><small>${allReady ? "可以开启提醒" : "需完成 S/A/B/C 四级配置"}</small></div></div>
     </section>
     <section class="admin-grid">
       <div class="admin-main">
-        <div class="panel-header"><div><h3>等级倒排模板</h3><p>只配置 5 个核心节点；认领、拍摄和修改时间由系统自动推导</p></div><span class="draft-badge">演示草案</span></div>
+        <div class="panel-header"><div><h3>等级节点间隔模板</h3><p>节点确认时立即开始计算下一节点截止时间</p></div><span class="draft-badge">演示草案</span></div>
         <div class="template-list">${state.templates.map(renderTemplate).join("")}</div>
       </div>
       <aside class="admin-side">
@@ -284,7 +284,10 @@ function renderTemplate(template) {
     <header><div class="template-level level-${template.level.toLowerCase()}">${template.level}</div><div><strong>${template.level} 级视频</strong><span>${template.confirmed ? `由 ${escapeHtml(template.confirmedBy || "管理员")} 确认` : "待业务负责人核对"}</span></div><button class="template-toggle" data-action="toggle-template" data-level="${template.level}">${template.confirmed ? "取消确认" : "确认模板"}</button></header>
     <div class="offset-grid">${TEMPLATE_STAGE_ORDER.map((stage) => {
       const skipped = stage === STAGES.INITIAL_REVIEW && !["S", "A"].includes(template.level);
-      return `<label class="offset-field ${skipped ? "skipped" : ""}"><span>${STAGE_META[stage].label}</span>${skipped ? `<em>自动跳过</em>` : `<div><input type="number" min="0" step="1" data-offset-level="${template.level}" data-offset-stage="${stage}" value="${template.offsets[stage] ?? ""}" ${template.confirmed ? "disabled" : ""}/><small>h</small></div>`}</label>`;
+      const label = stage === STAGES.DIRECTOR_REVIEW && !["S", "A"].includes(template.level)
+        ? "剪辑交付 → 编导审核"
+        : TEMPLATE_INTERVAL_LABELS[stage];
+      return `<label class="offset-field ${skipped ? "skipped" : ""}"><span>${label}</span>${skipped ? `<em>自动跳过</em>` : `<div><input type="number" min="0" step="1" data-interval-level="${template.level}" data-interval-stage="${stage}" value="${template.intervals[stage] ?? ""}" ${template.confirmed ? "disabled" : ""}/><small>h</small></div>`}</label>`;
     }).join("")}</div>
     ${validation.valid ? "" : `<div class="template-errors">${validation.errors.map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>`}
   </article>`;
@@ -344,7 +347,7 @@ function renderCreateModal() {
       <label class="form-field"><span>视频等级 <em>*</em></span><select name="level" required><option value="">请选择</option>${LEVELS.map((level) => `<option value="${level}" ${readyLevels.includes(level) ? "" : "disabled"}>${level} 级${readyLevels.includes(level) ? "" : "（模板未确认）"}</option>`).join("")}</select></label>
       <label class="form-field full"><span>计划发布时间 <em>*</em></span><input name="publishAt" type="datetime-local" required /></label>
       <label class="shoot-toggle full"><div><strong>需要重新拍摄</strong><span>关闭后将自动跳过“待拍摄”环节</span></div><input name="needsShoot" type="checkbox" checked/><i></i></label>
-      ${readyLevels.length ? "" : `<div class="form-warning full">请先在管理后台确认至少一个等级的倒排模板。</div>`}
+      ${readyLevels.length ? "" : `<div class="form-warning full">请先在管理后台确认至少一个等级的节点间隔模板。</div>`}
       <div class="modal-footer full"><button type="button" class="secondary-button" data-action="close-modal">取消</button><button type="submit" class="primary-button" ${readyLevels.length ? "" : "disabled"}>创建并发布</button></div>
     </form>
   `);
@@ -525,10 +528,10 @@ function handleChange(event) {
     if (currentUser(state).role !== "admin") return toast("只有管理员可以修改提醒设置", "error");
     persist({ ...state, settings: { ...state.settings, enabled: event.target.checked } });
   }
-  if (event.target.matches("[data-offset-level]")) {
-    const { offsetLevel, offsetStage } = event.target.dataset;
-    const templates = state.templates.map((template) => template.level === offsetLevel
-      ? { ...template, offsets: { ...template.offsets, [offsetStage]: Number(event.target.value) } }
+  if (event.target.matches("[data-interval-level]")) {
+    const { intervalLevel, intervalStage } = event.target.dataset;
+    const templates = state.templates.map((template) => template.level === intervalLevel
+      ? { ...template, intervals: { ...template.intervals, [intervalStage]: Number(event.target.value) } }
       : template);
     state = saveState({ ...state, templates });
     render();

@@ -8,23 +8,24 @@ import {
 const director = { id: "director", name: "编导", role: "director" };
 const editor = { id: "editor", name: "剪辑", role: "editor" };
 const reviewer = { id: "reviewer", name: "中台", role: "reviewer" };
-const baseOffsets = {
+const baseIntervals = {
   [STAGES.WAITING_MATERIAL]: 48,
   [STAGES.EDITING]: 24,
   [STAGES.INITIAL_REVIEW]: 16,
   [STAGES.DIRECTOR_REVIEW]: 10,
   [STAGES.READY_PUBLISH]: 0
 };
-const templates = ["S", "A", "B", "C"].map((level) => ({ level, confirmed: true, includeShoot: true, offsets: { ...baseOffsets } }));
+const templates = ["S", "A", "B", "C"].map((level) => ({ level, confirmed: true, includeShoot: true, intervals: { ...baseIntervals } }));
 const now = new Date("2026-11-17T02:00:00.000Z");
 const publishAt = "2026-11-20T02:00:00.000Z";
 
-test("倒排模板拒绝逆序节点和非零待发布偏移", () => {
-  const invalid = { level: "S", confirmed: false, offsets: { ...baseOffsets, [STAGES.EDITING]: 80, [STAGES.READY_PUBLISH]: 2 } };
+test("节点间隔模板拒绝负数和缺失值，不要求数值递减", () => {
+  const invalid = { level: "S", confirmed: false, intervals: { ...baseIntervals, [STAGES.EDITING]: -1 } };
   const result = validateTemplate(invalid);
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((item) => item.includes("剪辑中")));
-  assert.ok(result.errors.some((item) => item.includes("0 小时")));
+  const valid = validateTemplate({ level: "S", confirmed: true, intervals: { ...baseIntervals, [STAGES.EDITING]: 80, [STAGES.READY_PUBLISH]: 2 } });
+  assert.equal(valid.valid, true);
 });
 
 test("已有素材任务跳过拍摄，B/C 跳过中台初审", () => {
@@ -34,6 +35,9 @@ test("已有素材任务跳过拍摄，B/C 跳过中台初审", () => {
   assert.equal(task.deadlines[STAGES.INITIAL_REVIEW], undefined);
   const claimed = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
   assert.equal(claimed.currentStage, STAGES.WAITING_MATERIAL);
+  const materialReadyAt = new Date("2026-11-18T06:00:00.000Z");
+  const editing = applyAction(claimed, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, materialReadyAt);
+  assert.equal(editing.deadlines[STAGES.EDITING], "2026-11-19T06:00:00.000Z");
 });
 
 test("角色权限阻止非剪辑认领和非负责人审核", () => {
@@ -117,10 +121,11 @@ test("已发布旧任务迁移为只读归档，不参与提醒", () => {
   assert.equal(legacy.reminderEnabled, false);
 });
 
-test("倒排日期以发布时间为锚点计算", () => {
-  const deadlines = buildDeadlines(publishAt, templates[0], { needsShoot: true });
-  assert.equal(deadlines[STAGES.WAITING_CLAIM], "2026-11-18T02:00:00.000Z");
+test("节点日期按实际起始时间和相邻间隔向后计算", () => {
+  const deadlines = buildDeadlines(publishAt, templates[0], { needsShoot: true, startAt: now });
+  assert.equal(deadlines[STAGES.WAITING_CLAIM], "2026-11-19T02:00:00.000Z");
   assert.equal(deadlines[STAGES.WAITING_SHOOT], deadlines[STAGES.WAITING_MATERIAL]);
-  assert.equal(deadlines[STAGES.MODIFYING], "2026-11-19T21:00:00.000Z");
+  assert.equal(deadlines[STAGES.EDITING], "2026-11-20T02:00:00.000Z");
+  assert.equal(deadlines[STAGES.MODIFYING], "2026-11-22T04:00:00.000Z");
   assert.equal(deadlines[STAGES.PUBLISHED], publishAt);
 });
