@@ -15,17 +15,33 @@ const baseIntervals = {
   [STAGES.DIRECTOR_REVIEW]: 10,
   [STAGES.READY_PUBLISH]: 0
 };
-const templates = ["S", "A", "B", "C"].map((level) => ({ level, confirmed: true, includeShoot: true, intervals: { ...baseIntervals } }));
+const templates = ["S", "A", "B", "C"].map((level) => ({
+  level, name: `${level}级视频`, enabled: true, confirmed: true,
+  includeInitialReview: ["S", "A"].includes(level), intervals: { ...baseIntervals }
+}));
 const now = new Date("2026-11-17T02:00:00.000Z");
 const publishAt = "2026-11-20T02:00:00.000Z";
 
 test("节点间隔模板拒绝负数和缺失值，不要求数值递减", () => {
-  const invalid = { level: "S", confirmed: false, intervals: { ...baseIntervals, [STAGES.EDITING]: -1 } };
+  const invalid = { level: "S", name: "S级视频", includeInitialReview: true, confirmed: false, intervals: { ...baseIntervals, [STAGES.EDITING]: -1 } };
   const result = validateTemplate(invalid);
   assert.equal(result.valid, false);
   assert.ok(result.errors.some((item) => item.includes("剪辑中")));
-  const valid = validateTemplate({ level: "S", confirmed: true, intervals: { ...baseIntervals, [STAGES.EDITING]: 80, [STAGES.READY_PUBLISH]: 2 } });
+  const valid = validateTemplate({ level: "S", name: "S级视频", includeInitialReview: true, confirmed: true, intervals: { ...baseIntervals, [STAGES.EDITING]: 80, [STAGES.READY_PUBLISH]: 2 } });
   assert.equal(valid.valid, true);
+});
+
+test("自定义等级可以独立决定是否经过中台初审", () => {
+  const customTemplates = [...templates, {
+    level: "P0", name: "热点急单", enabled: true, confirmed: true,
+    includeInitialReview: false, intervals: { ...baseIntervals }
+  }];
+  let task = createTask({ title: "热点", account: "集合号", level: "P0", publishAt, needsShoot: false }, director, customTemplates, now);
+  assert.equal(task.requiresInitialReview, false);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/cut" }, now);
+  assert.equal(task.currentStage, STAGES.DIRECTOR_REVIEW);
 });
 
 test("已有素材任务跳过拍摄，B/C 跳过中台初审", () => {

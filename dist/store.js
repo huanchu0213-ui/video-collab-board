@@ -25,7 +25,10 @@ function makeTemplates() {
   ];
   return Object.entries(templateIntervals).map(([level, values]) => ({
     level,
-    name: `${level}级演示草案`,
+    name: `${level}级视频`,
+    color: ({ S: "#9a5a18", A: "#2f7555", B: "#3d5fbd", C: "#66716b" })[level],
+    enabled: true,
+    includeInitialReview: ["S", "A"].includes(level),
     confirmed: false,
     includeShoot: true,
     intervals: Object.fromEntries(order.map((stage, index) => [stage, values[index]])),
@@ -52,6 +55,8 @@ function baseTask(partial, index) {
     title: partial.title,
     account: partial.account,
     level: partial.level,
+    levelName: `${partial.level}级视频`,
+    requiresInitialReview: ["S", "A"].includes(partial.level),
     needsShoot: partial.needsShoot !== false,
     publishAt,
     currentStage: stage,
@@ -115,7 +120,7 @@ function seedTasks() {
 
 export function defaultState() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     currentUserId: "u_director_zhou",
     activeView: "todo",
@@ -137,7 +142,7 @@ export function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
-    if (parsed.schemaVersion !== 2) return defaultState();
+    if (parsed.schemaVersion !== 3) return defaultState();
     return parsed;
   } catch {
     return defaultState();

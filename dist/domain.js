@@ -1,4 +1,4 @@
-export const LEVELS = ["S", "A", "B", "C"];
+export const DEFAULT_LEVELS = ["S", "A", "B", "C"];
 
 export const STAGES = {
   WAITING_CLAIM: "waiting_claim",
@@ -83,9 +83,11 @@ export function makeId(prefix = "id") {
 
 export function validateTemplate(template) {
   const errors = [];
-  if (!template || !LEVELS.includes(template.level)) errors.push("视频等级无效");
+  const level = template?.level?.trim();
+  if (!level || level.length > 8) errors.push("等级代码需为 1–8 个字符");
+  if (!template?.name?.trim() || template.name.trim().length > 20) errors.push("等级名称需为 1–20 个字符");
   const intervals = template?.intervals || {};
-  const required = TEMPLATE_STAGE_ORDER.filter((stage) => stage !== STAGES.INITIAL_REVIEW || ["S", "A"].includes(template?.level));
+  const required = TEMPLATE_STAGE_ORDER.filter((stage) => stage !== STAGES.INITIAL_REVIEW || template?.includeInitialReview);
   for (const stage of required) {
     const value = Number(intervals[stage]);
     if (!Number.isFinite(value) || value < 0) errors.push(`${STAGE_META[stage].label}需填写非负小时数`);
@@ -110,7 +112,7 @@ export function buildDeadlines(publishAt, template, { needsShoot = true, startAt
   deadlines[STAGES.WAITING_CLAIM] = deadlines[STAGES.WAITING_MATERIAL];
   if (needsShoot) deadlines[STAGES.WAITING_SHOOT] = deadlines[STAGES.WAITING_MATERIAL];
   setNext(STAGES.EDITING);
-  if (["S", "A"].includes(template.level)) setNext(STAGES.INITIAL_REVIEW);
+  if (template.includeInitialReview) setNext(STAGES.INITIAL_REVIEW);
   setNext(STAGES.DIRECTOR_REVIEW);
   deadlines[STAGES.MODIFYING] = new Date(cursor + Number(template.intervals[STAGES.EDITING]) * 3600000).toISOString();
   setNext(STAGES.READY_PUBLISH);
@@ -123,7 +125,7 @@ export function nextAfterClaim(task) {
 }
 
 export function nextReviewStage(task) {
-  return ["S", "A"].includes(task.level) ? STAGES.INITIAL_REVIEW : STAGES.DIRECTOR_REVIEW;
+  return task.requiresInitialReview ? STAGES.INITIAL_REVIEW : STAGES.DIRECTOR_REVIEW;
 }
 
 function eventFor(task, action, actor, now, payload = {}) {
@@ -148,9 +150,9 @@ export function createTask(input, actor, templates, now = new Date()) {
   for (const key of ["title", "account", "level", "publishAt"]) {
     if (!input[key]) throw new Error(`缺少必填字段：${key}`);
   }
-  if (!LEVELS.includes(input.level)) throw new Error("视频等级无效");
-  if (["S", "A"].includes(input.level) && !input.reviewerId) throw new Error("S/A 级任务尚未配置中台审核人");
   const template = templates.find((item) => item.level === input.level);
+  if (!template || template.enabled === false) throw new Error("所选等级模板不存在或已停用");
+  if (template.includeInitialReview && !input.reviewerId) throw new Error(`${template.level} 级任务尚未配置中台审核人`);
   const needsShoot = input.needsShoot !== false;
   const id = makeId("video");
   const task = {
@@ -159,6 +161,8 @@ export function createTask(input, actor, templates, now = new Date()) {
     title: input.title.trim(),
     account: input.account.trim(),
     level: input.level,
+    levelName: template.name,
+    requiresInitialReview: Boolean(template.includeInitialReview),
     needsShoot,
     publishAt: new Date(input.publishAt).toISOString(),
     currentStage: STAGES.WAITING_CLAIM,
@@ -424,7 +428,10 @@ export function migrateLegacyTask(legacy, templates, now = new Date()) {
     archived = true;
     readOnly = true;
   } else if (legacy.confirmed) currentStage = STAGES.READY_PUBLISH;
-  else if (legacy.cutUrl) currentStage = ["S", "A"].includes(legacy.level) ? STAGES.INITIAL_REVIEW : STAGES.DIRECTOR_REVIEW;
+  else if (legacy.cutUrl) {
+    const legacyTemplate = templates.find((item) => item.level === legacy.level);
+    currentStage = legacyTemplate?.includeInitialReview ? STAGES.INITIAL_REVIEW : STAGES.DIRECTOR_REVIEW;
+  }
   else if (legacy.editorId && legacy.materialUrl) currentStage = STAGES.EDITING;
   else if (legacy.editorId) currentStage = legacy.needsShoot === false ? STAGES.WAITING_MATERIAL : STAGES.WAITING_SHOOT;
   const template = templates.find((item) => item.level === legacy.level);
@@ -442,6 +449,8 @@ export function migrateLegacyTask(legacy, templates, now = new Date()) {
     migrationNeedsConfirmation: needsConfirmation,
     deadlines,
     scheduleIntervals: template?.intervals ? structuredClone(template.intervals) : {},
+    levelName: legacy.levelName || template?.name || `${legacy.level}级视频`,
+    requiresInitialReview: Boolean(legacy.requiresInitialReview ?? template?.includeInitialReview),
     stageStartedAt: legacy.updatedAt || new Date(now).toISOString(),
     events: legacy.events || []
   };
