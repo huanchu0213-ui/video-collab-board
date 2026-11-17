@@ -266,7 +266,7 @@ function renderAdmin() {
     </section>
     <section class="admin-grid">
       <div class="admin-main">
-        <div class="panel-header"><div><h3>等级倒排模板</h3><p>S/A 自动包含中台初审，B/C 将跳过该节点</p></div><span class="draft-badge">演示草案</span></div>
+        <div class="panel-header"><div><h3>等级倒排模板</h3><p>只配置 5 个核心节点；认领、拍摄和修改时间由系统自动推导</p></div><span class="draft-badge">演示草案</span></div>
         <div class="template-list">${state.templates.map(renderTemplate).join("")}</div>
       </div>
       <aside class="admin-side">

@@ -9,13 +9,10 @@ const director = { id: "director", name: "编导", role: "director" };
 const editor = { id: "editor", name: "剪辑", role: "editor" };
 const reviewer = { id: "reviewer", name: "中台", role: "reviewer" };
 const baseOffsets = {
-  [STAGES.WAITING_CLAIM]: 72,
-  [STAGES.WAITING_SHOOT]: 60,
   [STAGES.WAITING_MATERIAL]: 48,
   [STAGES.EDITING]: 24,
   [STAGES.INITIAL_REVIEW]: 16,
   [STAGES.DIRECTOR_REVIEW]: 10,
-  [STAGES.MODIFYING]: 4,
   [STAGES.READY_PUBLISH]: 0
 };
 const templates = ["S", "A", "B", "C"].map((level) => ({ level, confirmed: true, includeShoot: true, offsets: { ...baseOffsets } }));
@@ -122,6 +119,8 @@ test("已发布旧任务迁移为只读归档，不参与提醒", () => {
 
 test("倒排日期以发布时间为锚点计算", () => {
   const deadlines = buildDeadlines(publishAt, templates[0], { needsShoot: true });
-  assert.equal(deadlines[STAGES.WAITING_CLAIM], "2026-11-17T02:00:00.000Z");
+  assert.equal(deadlines[STAGES.WAITING_CLAIM], "2026-11-18T02:00:00.000Z");
+  assert.equal(deadlines[STAGES.WAITING_SHOOT], deadlines[STAGES.WAITING_MATERIAL]);
+  assert.equal(deadlines[STAGES.MODIFYING], "2026-11-19T21:00:00.000Z");
   assert.equal(deadlines[STAGES.PUBLISHED], publishAt);
 });

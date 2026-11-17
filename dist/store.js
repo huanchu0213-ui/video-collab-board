@@ -12,16 +12,16 @@ export const USERS = [
 ];
 
 const templateOffsets = {
-  S: [216, 168, 144, 72, 48, 32, 16, 0],
-  A: [144, 120, 96, 48, 32, 24, 12, 0],
-  B: [72, 56, 48, 24, 0, 12, 6, 0],
-  C: [36, 28, 24, 12, 0, 6, 3, 0]
+  S: [144, 72, 48, 32, 0],
+  A: [96, 48, 32, 24, 0],
+  B: [48, 24, 0, 12, 0],
+  C: [24, 12, 0, 6, 0]
 };
 
 function makeTemplates() {
   const order = [
-    STAGES.WAITING_CLAIM, STAGES.WAITING_SHOOT, STAGES.WAITING_MATERIAL, STAGES.EDITING,
-    STAGES.INITIAL_REVIEW, STAGES.DIRECTOR_REVIEW, STAGES.MODIFYING, STAGES.READY_PUBLISH
+    STAGES.WAITING_MATERIAL, STAGES.EDITING, STAGES.INITIAL_REVIEW,
+    STAGES.DIRECTOR_REVIEW, STAGES.READY_PUBLISH
   ];
   return Object.entries(templateOffsets).map(([level, values]) => ({
     level,

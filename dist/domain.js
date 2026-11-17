@@ -61,13 +61,10 @@ const ACTION_LABELS = {
 };
 
 export const TEMPLATE_STAGE_ORDER = [
-  STAGES.WAITING_CLAIM,
-  STAGES.WAITING_SHOOT,
   STAGES.WAITING_MATERIAL,
   STAGES.EDITING,
   STAGES.INITIAL_REVIEW,
   STAGES.DIRECTOR_REVIEW,
-  STAGES.MODIFYING,
   STAGES.READY_PUBLISH
 ];
 
@@ -80,10 +77,7 @@ export function validateTemplate(template) {
   const errors = [];
   if (!template || !LEVELS.includes(template.level)) errors.push("视频等级无效");
   const offsets = template?.offsets || {};
-  const required = TEMPLATE_STAGE_ORDER.filter((stage) => {
-    if (stage === STAGES.INITIAL_REVIEW) return ["S", "A"].includes(template?.level);
-    return stage !== STAGES.WAITING_SHOOT || template?.includeShoot !== false;
-  });
+  const required = TEMPLATE_STAGE_ORDER.filter((stage) => stage !== STAGES.INITIAL_REVIEW || ["S", "A"].includes(template?.level));
   for (const stage of required) {
     const value = Number(offsets[stage]);
     if (!Number.isFinite(value) || value < 0) errors.push(`${STAGE_META[stage].label}需填写非负小时数`);
@@ -107,10 +101,15 @@ export function buildDeadlines(publishAt, template, { needsShoot = true } = {}) 
   if (!Number.isFinite(publishTime)) throw new Error("计划发布时间无效");
   const deadlines = {};
   for (const stage of TEMPLATE_STAGE_ORDER) {
-    if (stage === STAGES.WAITING_SHOOT && !needsShoot) continue;
     if (stage === STAGES.INITIAL_REVIEW && !["S", "A"].includes(template.level)) continue;
     deadlines[stage] = new Date(publishTime - Number(template.offsets[stage]) * 3600000).toISOString();
   }
+  deadlines[STAGES.WAITING_CLAIM] = deadlines[STAGES.WAITING_MATERIAL];
+  if (needsShoot) deadlines[STAGES.WAITING_SHOOT] = deadlines[STAGES.WAITING_MATERIAL];
+  const reviewOffset = Number(template.offsets[STAGES.DIRECTOR_REVIEW]);
+  const readyOffset = Number(template.offsets[STAGES.READY_PUBLISH]);
+  const modifyOffset = readyOffset + (reviewOffset - readyOffset) / 2;
+  deadlines[STAGES.MODIFYING] = new Date(publishTime - modifyOffset * 3600000).toISOString();
   deadlines[STAGES.PUBLISHED] = new Date(publishTime).toISOString();
   return deadlines;
 }
