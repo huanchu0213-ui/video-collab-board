@@ -153,7 +153,7 @@ function myActionableTasks() {
 function riskBanner() {
   const unconfirmed = activeTemplates().filter((template) => !template.confirmed).map((template) => template.level).join(" / ");
   if (!unconfirmed) return "";
-  return `<div class="setup-banner">${icon("warning")}<div><strong>自动排期尚未启用</strong><span>${unconfirmed} 级模板仍是演示草案。请由管理员在后台核对并确认后再创建生产任务。</span></div><button class="text-button" data-view="admin">去配置 ${icon("chevron")}</button></div>`;
+  return `<div class="setup-banner">${icon("warning")}<div><strong>自动排期尚未启用</strong><span>${unconfirmed} 级模板仍是演示草案。请由管理员在后台核对并确认后再创建生产任务。</span></div><button class="text-button" data-view="admin">去配置</button></div>`;
 }
 
 function renderTodo() {
@@ -234,7 +234,7 @@ function renderTaskCard(task, wide = false) {
     </div>
     <div class="task-card-bottom">
       <span class="deadline ${overdue ? "is-overdue" : ""}">${icon("clock")} ${overdue ? relativeTime(deadline) : `${formatDate(deadline)} · ${relativeTime(deadline)}`}</span>
-      ${actionable && action ? `<button class="quick-button" data-task-action="${action[0]}" data-task-id="${task.id}">${action[1]} ${icon("chevron")}</button>` : `<button class="ghost-arrow" data-open-task="${task.id}" title="查看详情">${icon("chevron")}</button>`}
+      ${actionable && action ? `<button class="quick-button" data-task-action="${action[0]}" data-task-id="${task.id}">${action[1]}</button>` : `<button class="ghost-arrow" data-open-task="${task.id}" title="查看详情">详情</button>`}
     </div>
   </article>`;
 }
