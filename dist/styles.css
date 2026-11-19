@@ -348,6 +348,14 @@ body {
 .more-actions strong { font-size: 13px; }
 .more-actions span { font-size: 12px; }
 .toast { border-radius: 8px; background: #2e241d; font-size: 13px; }
+.catalog-block { margin: 14px 0; }
+.catalog-block > strong { display: block; margin-bottom: 8px; font-size: 13px; }
+.catalog-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.catalog-chips span { padding: 5px 8px; border: 1px solid #e3d1c2; border-radius: 6px; color: #6d4e38; background: #fbf0e7; font-size: 12px; }
+.field-help { display: block; margin-top: 6px; color: #8d7d70; font-size: 12px; line-height: 1.5; }
+.form-field input[type="file"] { height: auto; min-height: 44px; padding: 8px; }
+.form-field input[type="file"]::file-selector-button { margin-right: 10px; padding: 7px 10px; border: 1px solid #d8c1ae; border-radius: 6px; color: #543a29; background: #f6e5d8; cursor: pointer; }
+.material-row { background: #fff8f2; }
 @keyframes slideIn { from { transform: translateX(30px); opacity: .5; } to { transform: translateX(0); opacity: 1; } }
 @keyframes popIn { from { transform: translate(-50%, -48%) scale(.98); opacity: 0; } to { transform: translate(-50%, -50%) scale(1); opacity: 1; } }
 

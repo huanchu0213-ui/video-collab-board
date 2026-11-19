@@ -81,6 +81,13 @@ export function makeId(prefix = "id") {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function normalizePublishAt(value) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) {
+    return new Date(`${value}T23:59:00+08:00`).toISOString();
+  }
+  return new Date(value).toISOString();
+}
+
 export function validateTemplate(template) {
   const errors = [];
   const level = template?.level?.trim();
@@ -99,7 +106,7 @@ export function buildDeadlines(publishAt, template, { needsShoot = true, startAt
   const validation = validateTemplate(template);
   if (!template?.confirmed) throw new Error(`${template?.level || "该等级"}节点间隔模板尚未确认`);
   if (!validation.valid) throw new Error(validation.errors.join("；"));
-  const publishTime = new Date(publishAt).getTime();
+  const publishTime = new Date(normalizePublishAt(publishAt)).getTime();
   if (!Number.isFinite(publishTime)) throw new Error("计划发布时间无效");
   let cursor = new Date(startAt).getTime();
   if (!Number.isFinite(cursor)) throw new Error("排期起始时间无效");
@@ -164,7 +171,7 @@ export function createTask(input, actor, templates, now = new Date()) {
     levelName: template.name,
     requiresInitialReview: Boolean(template.includeInitialReview),
     needsShoot,
-    publishAt: new Date(input.publishAt).toISOString(),
+    publishAt: normalizePublishAt(input.publishAt),
     currentStage: STAGES.WAITING_CLAIM,
     previousStage: null,
     directorId: actor.id,
@@ -177,6 +184,9 @@ export function createTask(input, actor, templates, now = new Date()) {
     shooterName: input.shooterName || actor.name,
     scriptUrl: input.scriptUrl || "",
     materialUrl: "",
+    materialMethod: "",
+    materialNote: "",
+    materialAttachments: [],
     versions: [],
     scheduleIntervals: structuredClone(template.intervals),
     deadlines: buildDeadlines(input.publishAt, template, { needsShoot, startAt: now }),
@@ -249,9 +259,23 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
       return move(task, STAGES.WAITING_MATERIAL, actor, action, now, { note: payload.note });
     case ACTIONS.MATERIAL_READY: {
       assertStage(task, [STAGES.WAITING_MATERIAL], action);
-      if (!payload.url) throw new Error("请填写素材链接");
-      const next = move(task, STAGES.EDITING, actor, action, now, { metadata: { url: payload.url } });
-      next.materialUrl = payload.url;
+      if (!payload.materialMethod?.trim()) throw new Error("请选择素材给予方式");
+      const attachment = payload.attachment?.name ? {
+        name: payload.attachment.name,
+        size: Number(payload.attachment.size) || 0,
+        type: payload.attachment.type || "",
+        lastModified: Number(payload.attachment.lastModified) || null,
+        dataUrl: /^data:/.test(payload.attachment.dataUrl || "") ? payload.attachment.dataUrl : ""
+      } : null;
+      const note = payload.note?.trim() || "";
+      const next = move(task, STAGES.EDITING, actor, action, now, {
+        note,
+        metadata: { materialMethod: payload.materialMethod.trim(), attachment: attachment?.name || "" }
+      });
+      next.materialUrl = "";
+      next.materialMethod = payload.materialMethod.trim();
+      next.materialNote = note;
+      next.materialAttachments = attachment ? [...(task.materialAttachments || []), attachment] : [...(task.materialAttachments || [])];
       return next;
     }
     case ACTIONS.SUBMIT_CUT: {
@@ -313,7 +337,7 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
       if (!payload.publishAt || !payload.note?.trim()) throw new Error("改期必须填写新发布时间和原因");
       const template = payload.templates?.find((item) => item.level === task.level);
       const next = structuredClone(task);
-      next.publishAt = new Date(payload.publishAt).toISOString();
+      next.publishAt = normalizePublishAt(payload.publishAt);
       next.scheduleIntervals = structuredClone(template.intervals);
       next.deadlines = buildDeadlines(payload.publishAt, template, { needsShoot: task.needsShoot, startAt: now });
       next.updatedAt = new Date(now).toISOString();

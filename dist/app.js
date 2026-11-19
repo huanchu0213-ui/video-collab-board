@@ -91,6 +91,17 @@ function persist(next = state) {
   render();
 }
 
+function readAttachment(file) {
+  if (!file?.name) return Promise.resolve(null);
+  if (file.size > 1024 * 1024) return Promise.reject(new Error("演示环境附件请控制在 1MB 以内"));
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, size: file.size, type: file.type, lastModified: file.lastModified, dataUrl: reader.result });
+    reader.onerror = () => reject(new Error("附件读取失败，请重新选择"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function roleLabel(role) {
   return ({ director: "编导", editor: "剪辑", reviewer: "中台审核", admin: "管理员" })[role] || role;
 }
@@ -291,6 +302,7 @@ function renderAdmin() {
       </div>
       <aside class="admin-side">
         <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady ? "" : "disabled"}/><i></i></label><button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div></section>
+        <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号和素材给予方式，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
         <section class="settings-card"><h3>上线配置</h3><dl class="config-list"><div><dt>身份</dt><dd>飞书 SSO 适配器</dd></div><div><dt>剪辑池</dt><dd>剪辑中台</dd></div><div><dt>升级群</dt><dd>${escapeHtml(state.settings.groupName)}</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl></section>
         <button class="danger-link" data-action="reset-demo">恢复演示数据</button>
       </aside>
@@ -320,7 +332,7 @@ function renderDrawer() {
   const deadline = deadlineForCurrentStage(task);
   const action = primaryAction(task);
   return `<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" aria-label="任务详情">
-    <header class="drawer-header"><div><div class="drawer-badges">${levelBadge(task.level)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${task.needsShoot ? "需要拍摄" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
+    <header class="drawer-header"><div><div class="drawer-badges">${levelBadge(task.level)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${task.needsShoot ? "待拍摄素材" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
     <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${relativeTime(deadline)}</span></div></div>
     <div class="progress-track">${renderProgress(task)}</div>
     <section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>
@@ -339,12 +351,22 @@ function renderProgress(task) {
 }
 
 function renderFiles(task) {
-  const files = [
+  const linkedFiles = [
     task.scriptUrl && { label: "脚本 / Brief", url: task.scriptUrl, type: "DOC" },
-    task.materialUrl && { label: "原始素材", url: task.materialUrl, type: "RAW" },
+    task.materialUrl && { label: "历史素材链接", url: task.materialUrl, type: "RAW" },
     ...task.versions.map((version) => ({ label: `成片 V${version.number}`, url: version.url, type: "MP4", meta: `${version.submittedBy} · ${formatDate(version.submittedAt)}` }))
   ].filter(Boolean);
-  return files.length ? files.map((file) => `<a class="file-row" href="${escapeHtml(file.url)}" target="_blank" rel="noopener"><span>${file.type}</span><div><strong>${escapeHtml(file.label)}</strong><small>${escapeHtml(file.meta || "点击打开链接")}</small></div>${icon("link")}</a>`).join("") : `<div class="empty-inline">尚未添加交付文件</div>`;
+  const materialRows = [];
+  if (task.materialMethod) {
+    const attachmentNames = (task.materialAttachments || []).map((item) => item.name).filter(Boolean);
+    const meta = [task.materialMethod, attachmentNames.length ? `附件：${attachmentNames.join("、")}` : "", task.materialNote].filter(Boolean).join(" · ");
+    materialRows.push(`<div class="file-row material-row"><span>RAW</span><div><strong>素材给予方式</strong><small>${escapeHtml(meta)}</small></div></div>`);
+  }
+  for (const attachment of task.materialAttachments || []) {
+    if (attachment.dataUrl) materialRows.push(`<a class="file-row" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name)}"><span>ATT</span><div><strong>${escapeHtml(attachment.name)}</strong><small>${attachment.size ? `${Math.max(1, Math.round(attachment.size / 1024))} KB` : "素材附件"}</small></div>${icon("link")}</a>`);
+  }
+  const linkedRows = linkedFiles.map((file) => `<a class="file-row" href="${escapeHtml(file.url)}" target="_blank" rel="noopener"><span>${file.type}</span><div><strong>${escapeHtml(file.label)}</strong><small>${escapeHtml(file.meta || "点击打开链接")}</small></div>${icon("link")}</a>`);
+  return [...materialRows, ...linkedRows].join("") || `<div class="empty-inline">尚未添加交付文件</div>`;
 }
 
 function renderEvent(event) {
@@ -356,20 +378,33 @@ function renderModal() {
   if (modal.type === "user") return renderUserModal();
   if (modal.type === "action") return renderActionModal();
   if (modal.type === "template") return renderTemplateModal();
+  if (modal.type === "catalogs") return renderCatalogModal();
   return "";
 }
 
 function renderCreateModal() {
   const readyTemplates = activeTemplates().filter((item) => item.confirmed && validateTemplate(item).valid);
-  return modalShell("新建视频任务", "四项必填，其他信息可以后补", `
+  const canCreate = readyTemplates.length > 0 && state.settings.accounts.length > 0;
+  return modalShell("新建视频任务", "五项选择完成后即可发布任务", `
     <form id="create-form" class="modal-form">
       <label class="form-field full"><span>视频选题 <em>*</em></span><input name="title" required maxlength="80" placeholder="一句话说明这条片子要讲什么" autofocus /></label>
-      <label class="form-field"><span>账号 / 达人 <em>*</em></span><input name="account" required placeholder="例如：万万" /></label>
+      <label class="form-field"><span>账号 / 达人 <em>*</em></span><select name="account" required><option value="">请选择</option>${state.settings.accounts.map((account) => `<option value="${escapeHtml(account)}">${escapeHtml(account)}</option>`).join("")}</select></label>
       <label class="form-field"><span>视频等级 <em>*</em></span><select name="level" required><option value="">请选择</option>${activeTemplates().map((template) => `<option value="${escapeHtml(template.level)}" ${readyTemplates.includes(template) ? "" : "disabled"}>${escapeHtml(template.name)}${readyTemplates.includes(template) ? "" : "（模板未确认）"}</option>`).join("")}</select></label>
-      <label class="form-field full"><span>计划发布时间 <em>*</em></span><input name="publishAt" type="datetime-local" required /></label>
-      <label class="shoot-toggle full"><div><strong>需要重新拍摄</strong><span>关闭后将自动跳过“待拍摄”环节</span></div><input name="needsShoot" type="checkbox" checked/><i></i></label>
+      <label class="form-field full"><span>计划发布日期 <em>*</em></span><input name="publishAt" type="date" required /></label>
+      <label class="form-field full"><span>素材状态 <em>*</em></span><select name="materialStatus" required><option value="">请选择</option><option value="existing">已有素材</option><option value="needs_shoot">待拍摄素材</option></select></label>
       ${readyTemplates.length ? "" : `<div class="form-warning full">请先在管理后台确认至少一个等级的节点间隔模板。</div>`}
-      <div class="modal-footer full"><button type="button" class="secondary-button" data-action="close-modal">取消</button><button type="submit" class="primary-button" ${readyTemplates.length ? "" : "disabled"}>创建并发布</button></div>
+      ${state.settings.accounts.length ? "" : `<div class="form-warning full">请先在管理后台配置至少一个账号 / 达人。</div>`}
+      <div class="modal-footer full"><button type="button" class="secondary-button" data-action="close-modal">取消</button><button type="submit" class="primary-button" ${canCreate ? "" : "disabled"}>创建并发布</button></div>
+    </form>
+  `);
+}
+
+function renderCatalogModal() {
+  return modalShell("基础选项配置", "每行填写一个选项，保存后立即用于新建和素材确认", `
+    <form id="catalog-form" class="modal-form single">
+      <label class="form-field full"><span>账号 / 达人 <em>*</em></span><textarea name="accounts" required rows="7" placeholder="每行一个账号">${escapeHtml(state.settings.accounts.join("\n"))}</textarea><small class="field-help">统一维护后，新建任务只需选择，不再手动输入。</small></label>
+      <label class="form-field full"><span>素材给予方式 <em>*</em></span><textarea name="materialMethods" required rows="5" placeholder="每行一种方式">${escapeHtml(state.settings.materialDeliveryMethods.join("\n"))}</textarea><small class="field-help">例如：飞书、现场传输、剪映云空间。</small></label>
+      ${modalFooter("保存配置")}
     </form>
   `);
 }
@@ -397,7 +432,6 @@ function renderTemplateModal() {
 
 function actionSpec(task, action) {
   const specs = {
-    [ACTIONS.MATERIAL_READY]: { title: "确认素材就绪", desc: "添加素材文件夹链接后进入剪辑环节", url: "素材链接", submit: "确认并推进" },
     [ACTIONS.SUBMIT_CUT]: { title: task.currentStage === STAGES.MODIFYING ? "提交修改版本" : "提交成片", desc: "新版本会保留，不覆盖历史成片", url: "成片链接", note: "版本说明（可选）", submit: "提交审核" },
     [ACTIONS.PUBLISH]: { title: "确认视频发布", desc: "发布后任务归档，只读保留完整记录", url: "发布链接（可选）", note: "发布备注（可选）", submit: "确认已发布" },
     [ACTIONS.PAUSE]: { title: "暂停任务", desc: "暂停后停止所有提醒，恢复时回到原环节", note: "暂停原因", submit: "确认暂停", danger: true },
@@ -419,10 +453,13 @@ function renderActionModal() {
     return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions"><button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button><button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
   }
   if (modal.action === "reschedule") {
-    return modalShell("调整发布时间", "系统将按已确认模板重新计算节点", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.RESCHEDULE}"/><label class="form-field full"><span>新发布时间</span><input name="publishAt" type="datetime-local" required/></label><label class="form-field full"><span>改期原因</span><textarea name="note" required placeholder="说明为什么需要改期"></textarea></label>${modalFooter("确认改期")}</form>`);
+    return modalShell("调整发布日期", "系统将按已确认模板重新计算节点", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.RESCHEDULE}"/><label class="form-field full"><span>新计划发布日期</span><input name="publishAt" type="date" required/></label><label class="form-field full"><span>改期原因</span><textarea name="note" required placeholder="说明为什么需要改期"></textarea></label>${modalFooter("确认改期")}</form>`);
   }
   if (modal.action === "transfer") {
     return modalShell("转交负责人", "只变更当前环节负责人，不修改历史记录", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.TRANSFER}"/><label class="form-field full"><span>新负责人</span><select name="userId" required><option value="">请选择</option>${USERS.map((user) => `<option value="${user.id}">${escapeHtml(user.name)} · ${roleLabel(user.role)}</option>`).join("")}</select></label><label class="form-field full"><span>转交原因</span><textarea name="note" required></textarea></label>${modalFooter("确认转交")}</form>`);
+  }
+  if (modal.action === ACTIONS.MATERIAL_READY) {
+    return modalShell("确认素材就绪", "选择素材给予方式后进入剪辑环节", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.MATERIAL_READY}"/><label class="form-field full"><span>素材给予方式 <em>*</em></span><select name="materialMethod" required><option value="">请选择</option>${state.settings.materialDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>附件（可选）</span><input name="attachment" type="file"/><small class="field-help">可补充交接单或素材说明文件；演示环境支持 1MB 以内附件。</small></label><label class="form-field full"><span>备注（可选）</span><textarea name="note" placeholder="例如：素材已放入对应文件夹，缺少的镜头稍后补充"></textarea></label>${modalFooter("确认并推进")}</form>`);
   }
   const spec = actionSpec(task, modal.action);
   return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${modal.action}"/>${spec.url ? `<label class="form-field full"><span>${spec.url}</span><input name="url" type="url" ${modal.action === ACTIONS.PUBLISH ? "" : "required"} placeholder="https://"/></label>` : ""}${spec.note ? `<label class="form-field full"><span>${spec.note}</span><textarea name="note" ${[ACTIONS.PAUSE, ACTIONS.CANCEL, ACTIONS.REJECT].includes(modal.action) ? "required" : ""} placeholder="${spec.note}"></textarea></label>` : ""}${modalFooter(spec.submit, spec.danger)}</form>`);
@@ -477,7 +514,7 @@ async function performAction(taskId, action, payload) {
   }
 }
 
-function handleSubmit(event) {
+async function handleSubmit(event) {
   if (event.target.id === "template-form") {
     event.preventDefault();
     const data = new FormData(event.target);
@@ -517,13 +554,25 @@ function handleSubmit(event) {
     toast(`${level} 级模板已新增，请配置并确认`);
     return;
   }
+  if (event.target.id === "catalog-form") {
+    event.preventDefault();
+    const data = new FormData(event.target);
+    const parseOptions = (value) => [...new Set(String(value || "").split(/[\n,，]+/).map((item) => item.trim()).filter(Boolean))];
+    const accounts = parseOptions(data.get("accounts"));
+    const materialDeliveryMethods = parseOptions(data.get("materialMethods"));
+    if (!accounts.length || !materialDeliveryMethods.length) return toast("账号和素材给予方式都至少保留一项", "error");
+    modal = null;
+    persist({ ...state, settings: { ...state.settings, accounts, materialDeliveryMethods } });
+    toast("基础选项已更新");
+    return;
+  }
   if (event.target.id === "create-form") {
     event.preventDefault();
     const data = new FormData(event.target);
     try {
       const task = createTask({
         title: data.get("title"), account: data.get("account"), level: data.get("level"),
-        publishAt: data.get("publishAt"), needsShoot: data.get("needsShoot") === "on",
+        publishAt: data.get("publishAt"), needsShoot: data.get("materialStatus") === "needs_shoot",
         reviewerId: "u_reviewer_xu", reviewerName: "徐青"
       }, currentUser(state), state.templates);
       modal = null;
@@ -535,7 +584,12 @@ function handleSubmit(event) {
     event.preventDefault();
     const data = new FormData(event.target);
     const action = data.get("action");
-    const payload = { url: data.get("url"), note: data.get("note"), publishAt: data.get("publishAt") };
+    const payload = { url: data.get("url"), note: data.get("note"), publishAt: data.get("publishAt"), materialMethod: data.get("materialMethod") };
+    const attachment = data.get("attachment");
+    if (attachment?.name) {
+      try { payload.attachment = await readAttachment(attachment); }
+      catch (error) { toast(error.message, "error"); return; }
+    }
     if (action === ACTIONS.TRANSFER) payload.user = USERS.find((user) => user.id === data.get("userId"));
     if (action === ACTIONS.RESCHEDULE) payload.templates = state.templates;
     performAction(modal.taskId, action, payload);
@@ -566,6 +620,7 @@ function handleClick(event) {
     if (action === "scan-reminders") { scanReminders(); return; }
     if (action === "toggle-template") toggleTemplate(actionEl.dataset.level);
     if (action === "open-add-template") modal = { type: "template", level: null };
+    if (action === "open-catalogs") modal = { type: "catalogs" };
     if (action === "edit-template") modal = { type: "template", level: actionEl.dataset.level };
     if (action === "toggle-template-enabled") toggleTemplateEnabled(actionEl.dataset.level);
     render(); return;

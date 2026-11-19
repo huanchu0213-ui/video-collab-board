@@ -1,6 +1,8 @@
 import { STAGES, STAGE_META } from "./domain.js";
 
 const STORAGE_KEY = "video-collab-board:v1";
+const DEFAULT_ACCOUNTS = ["万万", "丝丝", "周周", "西西", "女团集合号"];
+const DEFAULT_MATERIAL_METHODS = ["飞书", "现场传输", "剪映云空间"];
 
 export const USERS = [
   { id: "u_director_zhou", name: "周周编导", role: "director", avatar: "周" },
@@ -71,6 +73,9 @@ function baseTask(partial, index) {
     shooterName: partial.directorName || "周周编导",
     scriptUrl: "https://example.com/script",
     materialUrl: partial.materialUrl || "",
+    materialMethod: partial.materialMethod || (stage === STAGES.EDITING || partial.materialUrl ? "飞书" : ""),
+    materialNote: partial.materialNote || "",
+    materialAttachments: partial.materialAttachments || [],
     versions: partial.versions || [],
     scheduleIntervals: Object.fromEntries([
       STAGES.WAITING_MATERIAL, STAGES.EDITING, STAGES.INITIAL_REVIEW,
@@ -132,8 +137,33 @@ export function defaultState() {
       groupId: "oc_video_collab_demo",
       groupName: "剪辑中台协作群",
       editorLeadId: "u_admin",
-      identityMode: "demo"
+      identityMode: "demo",
+      accounts: [...DEFAULT_ACCOUNTS],
+      materialDeliveryMethods: [...DEFAULT_MATERIAL_METHODS]
     }
+  };
+}
+
+function normalizeState(parsed) {
+  const defaults = defaultState();
+  return {
+    ...parsed,
+    settings: {
+      ...defaults.settings,
+      ...(parsed.settings || {}),
+      accounts: Array.isArray(parsed.settings?.accounts) && parsed.settings.accounts.length
+        ? parsed.settings.accounts
+        : defaults.settings.accounts,
+      materialDeliveryMethods: Array.isArray(parsed.settings?.materialDeliveryMethods) && parsed.settings.materialDeliveryMethods.length
+        ? parsed.settings.materialDeliveryMethods
+        : defaults.settings.materialDeliveryMethods
+    },
+    tasks: (parsed.tasks || []).map((task) => ({
+      ...task,
+      materialMethod: task.materialMethod || (task.materialUrl ? "飞书" : ""),
+      materialNote: task.materialNote || "",
+      materialAttachments: Array.isArray(task.materialAttachments) ? task.materialAttachments : []
+    }))
   };
 }
 
@@ -143,7 +173,7 @@ export function loadState() {
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
     if (parsed.schemaVersion !== 3) return defaultState();
-    return parsed;
+    return normalizeState(parsed);
   } catch {
     return defaultState();
   }

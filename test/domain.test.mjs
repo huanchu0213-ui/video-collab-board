@@ -39,7 +39,7 @@ test("自定义等级可以独立决定是否经过中台初审", () => {
   let task = createTask({ title: "热点", account: "集合号", level: "P0", publishAt, needsShoot: false }, director, customTemplates, now);
   assert.equal(task.requiresInitialReview, false);
   task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
-  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
   task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/cut" }, now);
   assert.equal(task.currentStage, STAGES.DIRECTOR_REVIEW);
 });
@@ -52,15 +52,18 @@ test("已有素材任务跳过拍摄，B/C 跳过中台初审", () => {
   const claimed = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
   assert.equal(claimed.currentStage, STAGES.WAITING_MATERIAL);
   const materialReadyAt = new Date("2026-11-18T06:00:00.000Z");
-  const editing = applyAction(claimed, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, materialReadyAt);
+  const editing = applyAction(claimed, ACTIONS.MATERIAL_READY, director, { materialMethod: "剪映云空间", note: "已上传", attachment: { name: "素材清单.xlsx", size: 1024, type: "application/vnd.ms-excel", dataUrl: "data:application/vnd.ms-excel;base64,ZmFrZQ==" } }, materialReadyAt);
   assert.equal(editing.deadlines[STAGES.EDITING], "2026-11-19T06:00:00.000Z");
+  assert.equal(editing.materialMethod, "剪映云空间");
+  assert.equal(editing.materialAttachments[0].name, "素材清单.xlsx");
+  assert.match(editing.materialAttachments[0].dataUrl, /^data:/);
 });
 
 test("角色权限阻止非剪辑认领和非负责人审核", () => {
   const task = createTask({ title: "权限测试", account: "万万", level: "B", publishAt, needsShoot: false }, director, templates, now);
   assert.throws(() => applyAction(task, ACTIONS.CLAIM, director, {}, now), /只有剪辑/);
   let reviewTask = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
-  reviewTask = applyAction(reviewTask, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, now);
+  reviewTask = applyAction(reviewTask, ACTIONS.MATERIAL_READY, director, { materialMethod: "现场传输" }, now);
   reviewTask = applyAction(reviewTask, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/cut" }, now);
   assert.throws(() => applyAction(reviewTask, ACTIONS.APPROVE, reviewer, {}, now), /只有当前审核负责人/);
 });
@@ -68,7 +71,7 @@ test("角色权限阻止非剪辑认领和非负责人审核", () => {
 test("S/A 成片必须经过中台初审，再进入编导终审", () => {
   let task = createTask({ title: "重点视频", account: "周周", level: "S", publishAt, needsShoot: false, reviewerId: reviewer.id, reviewerName: reviewer.name }, director, templates, now);
   task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
-  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
   task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/v1" }, now);
   assert.equal(task.currentStage, STAGES.INITIAL_REVIEW);
   task = applyAction(task, ACTIONS.APPROVE, reviewer, { note: "通过" }, now);
@@ -80,7 +83,7 @@ test("S/A 成片必须经过中台初审，再进入编导终审", () => {
 test("退回修改保留旧版本并生成新版本", () => {
   let task = createTask({ title: "修改测试", account: "丝丝", level: "C", publishAt, needsShoot: false }, director, templates, now);
   task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
-  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { url: "https://example.com/material" }, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
   task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/v1" }, now);
   task = applyAction(task, ACTIONS.REJECT, director, { note: "字幕需要调整" }, now);
   assert.equal(task.currentStage, STAGES.MODIFYING);
@@ -144,4 +147,16 @@ test("节点日期按实际起始时间和相邻间隔向后计算", () => {
   assert.equal(deadlines[STAGES.EDITING], "2026-11-20T02:00:00.000Z");
   assert.equal(deadlines[STAGES.MODIFYING], "2026-11-22T04:00:00.000Z");
   assert.equal(deadlines[STAGES.PUBLISHED], publishAt);
+});
+
+test("发布日期支持日维度并按北京时间当天结束保存", () => {
+  const task = createTask({ title: "日维度排期", account: "万万", level: "B", publishAt: "2026-11-20", needsShoot: false }, director, templates, now);
+  assert.equal(task.publishAt, "2026-11-20T15:59:00.000Z");
+  assert.equal(task.deadlines[STAGES.PUBLISHED], task.publishAt);
+});
+
+test("素材确认必须选择后台配置的给予方式", () => {
+  let task = createTask({ title: "素材交接", account: "万万", level: "B", publishAt, needsShoot: false }, director, templates, now);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  assert.throws(() => applyAction(task, ACTIONS.MATERIAL_READY, director, {}, now), /请选择素材给予方式/);
 });
