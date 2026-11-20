@@ -131,16 +131,17 @@ function renderShell(content) {
           <span class="pulse-dot"></span>
           <div><strong>${state.settings.identityMode === "demo" ? "演示模式" : "飞书已连接"}</strong><small>${templateReady ? "排期模板已就绪" : "待确认排期模板"}</small></div>
         </div>
-        <div class="identity-card">
+        <button class="identity-card" data-action="switch-user" title="切换演示身份" aria-label="切换演示身份，当前为${escapeHtml(user.name)}">
           <div class="avatar">${escapeHtml(user.avatar || user.name.slice(0, 1))}</div>
           <div class="identity-copy"><strong>${escapeHtml(user.name)}</strong><span>${roleLabel(user.role)}</span></div>
-          <button class="icon-button" data-action="switch-user" title="切换演示身份">⌄</button>
-        </div>
+          <span class="identity-chevron" aria-hidden="true">⌄</span>
+        </button>
       </aside>
       <main class="main">
         <header class="topbar">
           <div><h1>${title}</h1><p>${subtitle}</p></div>
           <div class="top-actions">
+            <button class="mobile-identity-button" data-action="switch-user" title="切换演示身份" aria-label="切换演示身份，当前为${escapeHtml(user.name)}"><span>${escapeHtml(user.avatar || user.name.slice(0, 1))}</span><small>切换身份</small></button>
             <div class="sync-pill"><span></span> 本地已同步</div>
             ${["director", "admin"].includes(user.role) ? `<button class="primary-button" data-action="open-create">${icon("plus")} 新建视频</button>` : ""}
           </div>
