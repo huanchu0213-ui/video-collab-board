@@ -3,6 +3,7 @@ import { STAGES, STAGE_META } from "./domain.js";
 const STORAGE_KEY = "video-collab-board:v1";
 const DEFAULT_ACCOUNTS = ["万万", "丝丝", "周周", "西西", "女团集合号"];
 const DEFAULT_MATERIAL_METHODS = ["飞书", "现场传输", "剪映云空间"];
+const DEFAULT_CUT_METHODS = ["剪映云空间", "飞书", "现场传输"];
 
 export const USERS = [
   { id: "u_director_zhou", name: "周周编导", role: "director", avatar: "周" },
@@ -139,7 +140,8 @@ export function defaultState() {
       editorLeadId: "u_admin",
       identityMode: "demo",
       accounts: [...DEFAULT_ACCOUNTS],
-      materialDeliveryMethods: [...DEFAULT_MATERIAL_METHODS]
+      materialDeliveryMethods: [...DEFAULT_MATERIAL_METHODS],
+      cutDeliveryMethods: [...DEFAULT_CUT_METHODS]
     }
   };
 }
@@ -156,13 +158,21 @@ function normalizeState(parsed) {
         : defaults.settings.accounts,
       materialDeliveryMethods: Array.isArray(parsed.settings?.materialDeliveryMethods) && parsed.settings.materialDeliveryMethods.length
         ? parsed.settings.materialDeliveryMethods
-        : defaults.settings.materialDeliveryMethods
+        : defaults.settings.materialDeliveryMethods,
+      cutDeliveryMethods: Array.isArray(parsed.settings?.cutDeliveryMethods) && parsed.settings.cutDeliveryMethods.length
+        ? parsed.settings.cutDeliveryMethods
+        : defaults.settings.cutDeliveryMethods
     },
     tasks: (parsed.tasks || []).map((task) => ({
       ...task,
       materialMethod: task.materialMethod || (task.materialUrl ? "飞书" : ""),
       materialNote: task.materialNote || "",
-      materialAttachments: Array.isArray(task.materialAttachments) ? task.materialAttachments : []
+      materialAttachments: Array.isArray(task.materialAttachments) ? task.materialAttachments : [],
+      versions: (task.versions || []).map((version) => ({
+        ...version,
+        deliveryMethod: version.deliveryMethod || (version.url ? "链接" : ""),
+        deliveryNote: version.deliveryNote || ""
+      }))
     }))
   };
 }

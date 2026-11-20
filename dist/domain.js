@@ -280,16 +280,18 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
     }
     case ACTIONS.SUBMIT_CUT: {
       assertStage(task, [STAGES.EDITING, STAGES.MODIFYING], action);
-      if (!payload.url) throw new Error("请填写成片链接");
+      if (!payload.cutDeliveryMethod?.trim()) throw new Error("请选择交片渠道");
       const version = {
         id: makeId("version"),
         number: task.versions.length + 1,
-        url: payload.url,
+        url: payload.url || "",
+        deliveryMethod: payload.cutDeliveryMethod.trim(),
+        deliveryNote: payload.deliveryNote?.trim() || "",
         note: payload.note || "",
         submittedBy: actor.name,
         submittedAt: new Date(now).toISOString()
       };
-      const next = move(task, nextReviewStage(task), actor, action, now, { metadata: { version: version.number } });
+      const next = move(task, nextReviewStage(task), actor, action, now, { metadata: { version: version.number, deliveryMethod: version.deliveryMethod } });
       next.versions.push(version);
       return next;
     }

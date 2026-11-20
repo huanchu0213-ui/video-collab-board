@@ -9,6 +9,7 @@ import { createIdentityAdapter, createReminderAdapter } from "./adapters.js";
 let state = loadState();
 if (state.activeView === "admin" && currentUser(state).role !== "admin") state.activeView = "todo";
 let filters = { query: "", level: "all", owner: "all", risk: "all" };
+let todoFilters = { date: "all", status: "all" };
 let selectedTaskId = null;
 let modal = null;
 
@@ -161,6 +162,34 @@ function myActionableTasks() {
   return state.tasks.filter((task) => canAct(task, user) && ![STAGES.PUBLISHED, STAGES.CANCELLED].includes(task.currentStage));
 }
 
+function taskBelongsToUser(task, user) {
+  if (user.role === "admin") return true;
+  if (user.role === "editor") return task.editorId === user.id || task.currentStage === STAGES.WAITING_CLAIM;
+  if (user.role === "reviewer") return task.reviewerId === user.id;
+  return task.directorId === user.id || task.shooterId === user.id;
+}
+
+function shanghaiDateKey(value) {
+  if (!value) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(new Date(value));
+  const part = (type) => parts.find((item) => item.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function matchesTodoDate(task, value) {
+  if (value === "all") return true;
+  const today = shanghaiDateKey(new Date());
+  const taskDate = shanghaiDateKey(task.publishAt);
+  if (value === "today") return taskDate === today;
+  if (value === "overdue") return taskDate < today;
+  const days = value === "next3" ? 3 : 7;
+  const end = new Date(`${today}T00:00:00+08:00`);
+  end.setUTCDate(end.getUTCDate() + days);
+  return taskDate >= today && taskDate <= shanghaiDateKey(end);
+}
+
 function riskBanner() {
   const unconfirmed = activeTemplates().filter((template) => !template.confirmed).map((template) => template.level).join(" / ");
   if (!unconfirmed) return "";
@@ -170,15 +199,21 @@ function riskBanner() {
 function renderTodo() {
   const user = currentUser(state);
   const buckets = { overdue: [], today: [], upcoming: [], waiting: [] };
-  state.tasks.filter((task) => !task.archived && task.currentStage !== STAGES.CANCELLED).forEach((task) => {
+  const ownedTasks = state.tasks.filter((task) => taskBelongsToUser(task, user));
+  const visibleTasks = ownedTasks.filter((task) => {
+    if (!matchesTodoDate(task, todoFilters.date)) return false;
+    if (todoFilters.status !== "all") return task.currentStage === todoFilters.status;
+    return !task.archived && task.currentStage !== STAGES.CANCELLED;
+  });
+  visibleTasks.forEach((task) => {
     const bucket = taskBucket(task, user);
     if (buckets[bucket]) buckets[bucket].push(task);
   });
   const counts = {
     overdue: buckets.overdue.length,
     today: buckets.today.length,
-    unclaimed: state.tasks.filter((task) => task.currentStage === STAGES.WAITING_CLAIM).length,
-    soon: state.tasks.filter((task) => {
+    unclaimed: visibleTasks.filter((task) => task.currentStage === STAGES.WAITING_CLAIM).length,
+    soon: visibleTasks.filter((task) => {
       const diff = new Date(task.publishAt).getTime() - Date.now();
       return diff > 0 && diff < 48 * 3600000 && task.currentStage !== STAGES.PUBLISHED;
     }).length
@@ -196,11 +231,27 @@ function renderTodo() {
       ${metricCard("等待认领", counts.unclaimed, "剪辑池待响应", "blue")}
       ${metricCard("48h 内发布", counts.soon, "留意审核缓冲", "mint")}
     </section>
-    <section class="todo-grid">
-      ${todoSection("超期", "已经越过当前节点截止时间", buckets.overdue, "danger")}
-      ${todoSection("今日处理", "今天需要完成的动作", buckets.today, "amber")}
-      ${todoSection("即将开始", "已排期且由你负责", buckets.upcoming, "blue")}
-      ${todoSection("等待他人", "关注即可，暂时无需操作", buckets.waiting.slice(0, 6), "muted")}
+    <section class="filter-bar todo-filter-bar" aria-label="我的待办筛选">
+      <select id="todo-date-filter">
+        <option value="all">全部发布日期</option>
+        <option value="today" ${todoFilters.date === "today" ? "selected" : ""}>今天发布</option>
+        <option value="next3" ${todoFilters.date === "next3" ? "selected" : ""}>未来 3 天</option>
+        <option value="next7" ${todoFilters.date === "next7" ? "selected" : ""}>未来 7 天</option>
+        <option value="overdue" ${todoFilters.date === "overdue" ? "selected" : ""}>已过计划发布日期</option>
+      </select>
+      <select id="todo-status-filter">
+        <option value="all">全部状态</option>
+        ${Object.entries(STAGE_META).map(([stage, meta]) => `<option value="${stage}" ${todoFilters.status === stage ? "selected" : ""}>${meta.label}</option>`).join("")}
+      </select>
+      <span class="result-count">归属于我的 ${visibleTasks.length} 条</span>
+    </section>
+    <section class="todo-grid ${todoFilters.status === "all" ? "" : "single"}">
+      ${todoFilters.status === "all" ? `
+        ${todoSection("超期", "已经越过当前节点截止时间", buckets.overdue, "danger")}
+        ${todoSection("今日处理", "今天需要完成的动作", buckets.today, "amber")}
+        ${todoSection("即将开始", "已排期且由你负责", buckets.upcoming, "blue")}
+        ${todoSection("等待他人", "关注即可，暂时无需操作", buckets.waiting.slice(0, 6), "muted")}
+      ` : todoSection("筛选结果", `当前状态：${stageLabel(todoFilters.status)}`, visibleTasks, "blue")}
     </section>
   `);
 }
@@ -302,7 +353,7 @@ function renderAdmin() {
       </div>
       <aside class="admin-side">
         <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady ? "" : "disabled"}/><i></i></label><button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div></section>
-        <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号和素材给予方式，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
+        <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号、素材给予方式和交片渠道，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>交片渠道</strong><div class="catalog-chips">${state.settings.cutDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
         <section class="settings-card"><h3>上线配置</h3><dl class="config-list"><div><dt>身份</dt><dd>飞书 SSO 适配器</dd></div><div><dt>剪辑池</dt><dd>剪辑中台</dd></div><div><dt>升级群</dt><dd>${escapeHtml(state.settings.groupName)}</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl></section>
         <button class="danger-link" data-action="reset-demo">恢复演示数据</button>
       </aside>
@@ -333,7 +384,7 @@ function renderDrawer() {
   const action = primaryAction(task);
   return `<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" aria-label="任务详情">
     <header class="drawer-header"><div><div class="drawer-badges">${levelBadge(task.level)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${task.needsShoot ? "待拍摄素材" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
-    <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${relativeTime(deadline)}</span></div></div>
+    <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div><small>承接剪辑</small><strong>${escapeHtml(task.editorName || "待认领")}</strong></div><div><small>负责编导</small><strong>${escapeHtml(task.directorName || "待指定")}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${relativeTime(deadline)}</span></div></div>
     <div class="progress-track">${renderProgress(task)}</div>
     <section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>
     <section class="drawer-section"><div class="section-title"><h3>操作时间轴</h3><span>${task.events.length} 条记录</span></div><div class="timeline">${[...task.events].reverse().map(renderEvent).join("")}</div></section>
@@ -354,7 +405,7 @@ function renderFiles(task) {
   const linkedFiles = [
     task.scriptUrl && { label: "脚本 / Brief", url: task.scriptUrl, type: "DOC" },
     task.materialUrl && { label: "历史素材链接", url: task.materialUrl, type: "RAW" },
-    ...task.versions.map((version) => ({ label: `成片 V${version.number}`, url: version.url, type: "MP4", meta: `${version.submittedBy} · ${formatDate(version.submittedAt)}` }))
+    ...task.versions.filter((version) => version.url).map((version) => ({ label: `成片 V${version.number}`, url: version.url, type: "MP4", meta: `${version.submittedBy} · ${formatDate(version.submittedAt)}` }))
   ].filter(Boolean);
   const materialRows = [];
   if (task.materialMethod) {
@@ -365,8 +416,12 @@ function renderFiles(task) {
   for (const attachment of task.materialAttachments || []) {
     if (attachment.dataUrl) materialRows.push(`<a class="file-row" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name)}"><span>ATT</span><div><strong>${escapeHtml(attachment.name)}</strong><small>${attachment.size ? `${Math.max(1, Math.round(attachment.size / 1024))} KB` : "素材附件"}</small></div>${icon("link")}</a>`);
   }
+  const cutRows = task.versions.filter((version) => !version.url).map((version) => {
+    const meta = [version.deliveryMethod, version.deliveryNote, `${version.submittedBy} · ${formatDate(version.submittedAt)}`].filter(Boolean).join(" · ");
+    return `<div class="file-row cut-row"><span>V${version.number}</span><div><strong>成片 V${version.number}</strong><small>${escapeHtml(meta)}</small></div></div>`;
+  });
   const linkedRows = linkedFiles.map((file) => `<a class="file-row" href="${escapeHtml(file.url)}" target="_blank" rel="noopener"><span>${file.type}</span><div><strong>${escapeHtml(file.label)}</strong><small>${escapeHtml(file.meta || "点击打开链接")}</small></div>${icon("link")}</a>`);
-  return [...materialRows, ...linkedRows].join("") || `<div class="empty-inline">尚未添加交付文件</div>`;
+  return [...materialRows, ...cutRows, ...linkedRows].join("") || `<div class="empty-inline">尚未添加交付文件</div>`;
 }
 
 function renderEvent(event) {
@@ -400,10 +455,11 @@ function renderCreateModal() {
 }
 
 function renderCatalogModal() {
-  return modalShell("基础选项配置", "每行填写一个选项，保存后立即用于新建和素材确认", `
+  return modalShell("基础选项配置", "每行填写一个选项，保存后立即用于前台选择", `
     <form id="catalog-form" class="modal-form single">
       <label class="form-field full"><span>账号 / 达人 <em>*</em></span><textarea name="accounts" required rows="7" placeholder="每行一个账号">${escapeHtml(state.settings.accounts.join("\n"))}</textarea><small class="field-help">统一维护后，新建任务只需选择，不再手动输入。</small></label>
       <label class="form-field full"><span>素材给予方式 <em>*</em></span><textarea name="materialMethods" required rows="5" placeholder="每行一种方式">${escapeHtml(state.settings.materialDeliveryMethods.join("\n"))}</textarea><small class="field-help">例如：飞书、现场传输、剪映云空间。</small></label>
+      <label class="form-field full"><span>交片渠道 <em>*</em></span><textarea name="cutMethods" required rows="5" placeholder="每行一种渠道">${escapeHtml(state.settings.cutDeliveryMethods.join("\n"))}</textarea><small class="field-help">例如：剪映云空间、飞书、现场传输。</small></label>
       ${modalFooter("保存配置")}
     </form>
   `);
@@ -432,7 +488,7 @@ function renderTemplateModal() {
 
 function actionSpec(task, action) {
   const specs = {
-    [ACTIONS.SUBMIT_CUT]: { title: task.currentStage === STAGES.MODIFYING ? "提交修改版本" : "提交成片", desc: "新版本会保留，不覆盖历史成片", url: "成片链接", note: "版本说明（可选）", submit: "提交审核" },
+    [ACTIONS.SUBMIT_CUT]: { title: task.currentStage === STAGES.MODIFYING ? "提交修改版本" : "提交成片", desc: "选择交片渠道；新版本会保留，不覆盖历史成片", note: "版本说明（可选）", submit: "提交审核" },
     [ACTIONS.PUBLISH]: { title: "确认视频发布", desc: "发布后任务归档，只读保留完整记录", url: "发布链接（可选）", note: "发布备注（可选）", submit: "确认已发布" },
     [ACTIONS.PAUSE]: { title: "暂停任务", desc: "暂停后停止所有提醒，恢复时回到原环节", note: "暂停原因", submit: "确认暂停", danger: true },
     [ACTIONS.RESUME]: { title: "恢复任务", desc: "任务将回到暂停前的环节并重新参与提醒", note: "恢复说明（可选）", submit: "恢复任务" },
@@ -447,7 +503,11 @@ function renderActionModal() {
   const task = state.tasks.find((item) => item.id === modal.taskId);
   if (!task) return "";
   if (modal.action === "open-review") {
-    return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "审核结果将决定下一步流程", `<div class="review-preview">${task.versions.length ? `<span>当前版本 V${task.versions.at(-1).number}</span><strong>${escapeHtml(task.title)}</strong><a href="${escapeHtml(task.versions.at(-1).url)}" target="_blank" rel="noopener">打开成片 ${icon("link")}</a>` : "暂无成片版本"}</div><div class="review-actions"><button class="approve-button" data-review-action="${ACTIONS.APPROVE}" data-task-id="${task.id}">✓ 通过审核</button><button class="reject-button" data-review-action="${ACTIONS.REJECT}" data-task-id="${task.id}">↩ 退回修改</button></div>`);
+    const version = task.versions.at(-1);
+    const delivery = version?.url
+      ? `<a href="${escapeHtml(version.url)}" target="_blank" rel="noopener">打开成片 ${icon("link")}</a>`
+      : `<p class="review-delivery">交片渠道：${escapeHtml(version?.deliveryMethod || "未记录")}${version?.deliveryNote ? ` · ${escapeHtml(version.deliveryNote)}` : ""}</p>`;
+    return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "审核结果将决定下一步流程", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><div class="review-actions"><button class="approve-button" data-review-action="${ACTIONS.APPROVE}" data-task-id="${task.id}">✓ 通过审核</button><button class="reject-button" data-review-action="${ACTIONS.REJECT}" data-task-id="${task.id}">↩ 退回修改</button></div>`);
   }
   if (modal.action === "more") {
     return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions"><button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button><button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
@@ -460,6 +520,10 @@ function renderActionModal() {
   }
   if (modal.action === ACTIONS.MATERIAL_READY) {
     return modalShell("确认素材就绪", "选择素材给予方式后进入剪辑环节", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.MATERIAL_READY}"/><label class="form-field full"><span>素材给予方式 <em>*</em></span><select name="materialMethod" required><option value="">请选择</option>${state.settings.materialDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>附件（可选）</span><input name="attachment" type="file"/><small class="field-help">可补充交接单或素材说明文件；演示环境支持 1MB 以内附件。</small></label><label class="form-field full"><span>备注（可选）</span><textarea name="note" placeholder="例如：素材已放入对应文件夹，缺少的镜头稍后补充"></textarea></label>${modalFooter("确认并推进")}</form>`);
+  }
+  if (modal.action === ACTIONS.SUBMIT_CUT) {
+    const spec = actionSpec(task, modal.action);
+    return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.SUBMIT_CUT}"/><label class="form-field full"><span>交片渠道 <em>*</em></span><select name="cutDeliveryMethod" required><option value="">请选择</option>${state.settings.cutDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>交片位置 / 备注（可选）</span><textarea name="deliveryNote" placeholder="例如：剪映云空间项目名称、飞书文件夹位置或现场接收人"></textarea></label><label class="form-field full"><span>${spec.note}</span><textarea name="note" placeholder="${spec.note}"></textarea></label>${modalFooter(spec.submit)}</form>`);
   }
   const spec = actionSpec(task, modal.action);
   return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${modal.action}"/>${spec.url ? `<label class="form-field full"><span>${spec.url}</span><input name="url" type="url" ${modal.action === ACTIONS.PUBLISH ? "" : "required"} placeholder="https://"/></label>` : ""}${spec.note ? `<label class="form-field full"><span>${spec.note}</span><textarea name="note" ${[ACTIONS.PAUSE, ACTIONS.CANCEL, ACTIONS.REJECT].includes(modal.action) ? "required" : ""} placeholder="${spec.note}"></textarea></label>` : ""}${modalFooter(spec.submit, spec.danger)}</form>`);
@@ -560,9 +624,10 @@ async function handleSubmit(event) {
     const parseOptions = (value) => [...new Set(String(value || "").split(/[\n,，]+/).map((item) => item.trim()).filter(Boolean))];
     const accounts = parseOptions(data.get("accounts"));
     const materialDeliveryMethods = parseOptions(data.get("materialMethods"));
-    if (!accounts.length || !materialDeliveryMethods.length) return toast("账号和素材给予方式都至少保留一项", "error");
+    const cutDeliveryMethods = parseOptions(data.get("cutMethods"));
+    if (!accounts.length || !materialDeliveryMethods.length || !cutDeliveryMethods.length) return toast("账号、素材给予方式和交片渠道都至少保留一项", "error");
     modal = null;
-    persist({ ...state, settings: { ...state.settings, accounts, materialDeliveryMethods } });
+    persist({ ...state, settings: { ...state.settings, accounts, materialDeliveryMethods, cutDeliveryMethods } });
     toast("基础选项已更新");
     return;
   }
@@ -584,7 +649,11 @@ async function handleSubmit(event) {
     event.preventDefault();
     const data = new FormData(event.target);
     const action = data.get("action");
-    const payload = { url: data.get("url"), note: data.get("note"), publishAt: data.get("publishAt"), materialMethod: data.get("materialMethod") };
+    const payload = {
+      url: data.get("url"), note: data.get("note"), publishAt: data.get("publishAt"),
+      materialMethod: data.get("materialMethod"), cutDeliveryMethod: data.get("cutDeliveryMethod"),
+      deliveryNote: data.get("deliveryNote")
+    };
     const attachment = data.get("attachment");
     if (attachment?.name) {
       try { payload.attachment = await readAttachment(attachment); }
@@ -607,6 +676,11 @@ async function scanReminders() {
 }
 
 function handleClick(event) {
+  const dateInput = event.target.closest('input[type="date"]');
+  if (dateInput) {
+    dateInput.focus();
+    try { dateInput.showPicker?.(); } catch { /* 浏览器不支持时保留原生日期输入行为 */ }
+  }
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) { state.activeView = view; selectedTaskId = null; modal = null; persist(state); return; }
   const actionEl = event.target.closest("[data-action]");
@@ -666,6 +740,8 @@ function toggleTemplateEnabled(level) {
 }
 
 function handleChange(event) {
+  if (event.target.id === "todo-date-filter") { todoFilters.date = event.target.value; render(); }
+  if (event.target.id === "todo-status-filter") { todoFilters.status = event.target.value; render(); }
   if (event.target.id === "filter-level") { filters.level = event.target.value; render(); }
   if (event.target.id === "filter-owner") { filters.owner = event.target.value; render(); }
   if (event.target.id === "filter-risk") { filters.risk = event.target.value; render(); }

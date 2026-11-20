@@ -40,7 +40,7 @@ test("自定义等级可以独立决定是否经过中台初审", () => {
   assert.equal(task.requiresInitialReview, false);
   task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
   task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
-  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/cut" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "剪映云空间", deliveryNote: "项目：热点" }, now);
   assert.equal(task.currentStage, STAGES.DIRECTOR_REVIEW);
 });
 
@@ -64,7 +64,7 @@ test("角色权限阻止非剪辑认领和非负责人审核", () => {
   assert.throws(() => applyAction(task, ACTIONS.CLAIM, director, {}, now), /只有剪辑/);
   let reviewTask = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
   reviewTask = applyAction(reviewTask, ACTIONS.MATERIAL_READY, director, { materialMethod: "现场传输" }, now);
-  reviewTask = applyAction(reviewTask, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/cut" }, now);
+  reviewTask = applyAction(reviewTask, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "飞书" }, now);
   assert.throws(() => applyAction(reviewTask, ACTIONS.APPROVE, reviewer, {}, now), /只有当前审核负责人/);
 });
 
@@ -72,7 +72,7 @@ test("S/A 成片必须经过中台初审，再进入编导终审", () => {
   let task = createTask({ title: "重点视频", account: "周周", level: "S", publishAt, needsShoot: false, reviewerId: reviewer.id, reviewerName: reviewer.name }, director, templates, now);
   task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
   task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
-  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/v1" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "剪映云空间", deliveryNote: "S级项目" }, now);
   assert.equal(task.currentStage, STAGES.INITIAL_REVIEW);
   task = applyAction(task, ACTIONS.APPROVE, reviewer, { note: "通过" }, now);
   assert.equal(task.currentStage, STAGES.DIRECTOR_REVIEW);
@@ -84,13 +84,22 @@ test("退回修改保留旧版本并生成新版本", () => {
   let task = createTask({ title: "修改测试", account: "丝丝", level: "C", publishAt, needsShoot: false }, director, templates, now);
   task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
   task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
-  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/v1" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "剪映云空间", deliveryNote: "项目 V1" }, now);
   task = applyAction(task, ACTIONS.REJECT, director, { note: "字幕需要调整" }, now);
   assert.equal(task.currentStage, STAGES.MODIFYING);
-  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { url: "https://example.com/v2" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "飞书", deliveryNote: "文件夹 V2" }, now);
   assert.equal(task.versions.length, 2);
-  assert.equal(task.versions[0].url, "https://example.com/v1");
+  assert.equal(task.versions[0].deliveryMethod, "剪映云空间");
+  assert.equal(task.versions[0].deliveryNote, "项目 V1");
   assert.equal(task.versions[1].number, 2);
+  assert.equal(task.versions[1].deliveryMethod, "飞书");
+});
+
+test("提交成片必须选择交片渠道", () => {
+  let task = createTask({ title: "交片校验", account: "万万", level: "B", publishAt, needsShoot: false }, director, templates, now);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
+  assert.throws(() => applyAction(task, ACTIONS.SUBMIT_CUT, editor, {}, now), /请选择交片渠道/);
 });
 
 test("暂停任务停止提醒，恢复后回到原环节", () => {
