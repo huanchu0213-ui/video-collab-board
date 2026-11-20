@@ -134,6 +134,7 @@ function renderShell(content) {
         <button class="identity-card" data-action="switch-user" title="切换演示身份" aria-label="切换演示身份，当前为${escapeHtml(user.name)}">
           <div class="avatar">${escapeHtml(user.avatar || user.name.slice(0, 1))}</div>
           <div class="identity-copy"><strong>${escapeHtml(user.name)}</strong><span>${roleLabel(user.role)}</span></div>
+          <span class="identity-compact-label" aria-hidden="true">切换</span>
           <span class="identity-chevron" aria-hidden="true">⌄</span>
         </button>
       </aside>
