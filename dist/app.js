@@ -9,7 +9,9 @@ import { createIdentityAdapter, createReminderAdapter } from "./adapters.js";
 let state = loadState();
 if (state.activeView === "admin" && currentUser(state).role !== "admin") state.activeView = "todo";
 let filters = { query: "", level: "all", owner: "all", risk: "all" };
-let todoFilters = { date: "all", status: "all" };
+let todoFilters = { date: "all", status: "all", start: "", end: "" };
+let datePickerOpen = false;
+let calendarMonth = "";
 let selectedTaskId = null;
 let modal = null;
 
@@ -46,6 +48,7 @@ const icon = (name) => {
     chevron: '<path d="m9 18 6-6-6-6"/>',
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/>',
     warning: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'
   };
@@ -180,16 +183,102 @@ function shanghaiDateKey(value) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-function matchesTodoDate(task, value) {
+function matchesTodoDate(task, { date: value, start, end }) {
   if (value === "all") return true;
   const today = shanghaiDateKey(new Date());
   const taskDate = shanghaiDateKey(task.publishAt);
+  if (value === "custom") return Boolean(start) && taskDate >= start && taskDate <= (end || start);
   if (value === "today") return taskDate === today;
   if (value === "overdue") return taskDate < today;
   const days = value === "next3" ? 3 : 7;
-  const end = new Date(`${today}T00:00:00+08:00`);
-  end.setUTCDate(end.getUTCDate() + days);
-  return taskDate >= today && taskDate <= shanghaiDateKey(end);
+  const presetEnd = new Date(`${today}T00:00:00+08:00`);
+  presetEnd.setUTCDate(presetEnd.getUTCDate() + days);
+  return taskDate >= today && taskDate <= shanghaiDateKey(presetEnd);
+}
+
+const TODO_DATE_PRESETS = [
+  ["all", "全部发布日期"],
+  ["today", "今天发布"],
+  ["next3", "未来 3 天"],
+  ["next7", "未来 7 天"],
+  ["overdue", "已过计划发布日期"]
+];
+
+function ensureCalendarMonth() {
+  if (calendarMonth) return;
+  calendarMonth = (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+}
+
+function shiftCalendarMonth(offset) {
+  ensureCalendarMonth();
+  const [year, month] = calendarMonth.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1 + offset, 1));
+  calendarMonth = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function compactDateLabel(dateKey) {
+  if (!dateKey) return "";
+  const [, month, day] = dateKey.split("-");
+  return `${Number(month)}月${Number(day)}日`;
+}
+
+function todoDateLabel() {
+  if (todoFilters.date !== "custom") return TODO_DATE_PRESETS.find(([value]) => value === todoFilters.date)?.[1] || "全部发布日期";
+  if (!todoFilters.start) return "选择日期区间";
+  if (!todoFilters.end) return `${compactDateLabel(todoFilters.start)}·选择结束日`;
+  return `${compactDateLabel(todoFilters.start)} – ${compactDateLabel(todoFilters.end)}`;
+}
+
+function renderDateCalendar() {
+  ensureCalendarMonth();
+  const [year, month] = calendarMonth.split("-").map(Number);
+  const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const today = shanghaiDateKey(new Date());
+  const cells = [
+    ...Array.from({ length: firstWeekday }, () => '<span class="calendar-day-placeholder" aria-hidden="true"></span>'),
+    ...Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const isStart = dateKey === todoFilters.start;
+      const isEnd = dateKey === todoFilters.end;
+      const inRange = Boolean(todoFilters.start && todoFilters.end && dateKey > todoFilters.start && dateKey < todoFilters.end);
+      const classes = [isStart ? "range-start" : "", isEnd ? "range-end" : "", inRange ? "in-range" : "", dateKey === today ? "is-today" : ""].filter(Boolean).join(" ");
+      return `<button type="button" class="calendar-day ${classes}" data-calendar-date="${dateKey}" aria-label="${year}年${month}月${day}日" aria-pressed="${isStart || isEnd}">${day}</button>`;
+    })
+  ].join("");
+  return `
+    <div class="calendar-heading">
+      <button type="button" data-calendar-shift="-1">上月</button>
+      <strong>${year}年${month}月</strong>
+      <button type="button" data-calendar-shift="1">下月</button>
+    </div>
+    <div class="calendar-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+    <div class="calendar-grid">${cells}</div>
+  `;
+}
+
+function renderTodoDateFilter() {
+  const selectionHint = todoFilters.date === "custom" && todoFilters.start && !todoFilters.end
+    ? `已选 ${compactDateLabel(todoFilters.start)}，请选择结束日期`
+    : todoFilters.date === "custom" && todoFilters.start && todoFilters.end
+      ? `已选 ${compactDateLabel(todoFilters.start)} 至 ${compactDateLabel(todoFilters.end)}`
+      : "点击第一个日期作为起点";
+  return `
+    <div class="date-filter-control">
+      <button type="button" id="todo-date-filter" class="date-filter-trigger ${todoFilters.date === "custom" ? "has-range" : ""}" data-action="toggle-date-filter" aria-haspopup="dialog" aria-expanded="${datePickerOpen}">
+        ${icon("calendar")}<span>${escapeHtml(todoDateLabel())}</span><i aria-hidden="true">⌄</i>
+      </button>
+      ${datePickerOpen ? `<div class="date-filter-popover" role="dialog" aria-label="选择发布日期区间">
+        <div class="date-filter-head"><div><strong>发布日期</strong><span>${selectionHint}</span></div><button type="button" data-action="clear-date-filter">清除</button></div>
+        <div class="date-preset-list" aria-label="快捷日期筛选">
+          ${TODO_DATE_PRESETS.map(([value, label]) => `<button type="button" class="${todoFilters.date === value ? "active" : ""}" data-date-preset="${value}">${label}</button>`).join("")}
+        </div>
+        <div class="date-calendar">${renderDateCalendar()}</div>
+        <div class="date-filter-footer"><span>首尾日期深色，区间日期浅色</span><button type="button" data-action="close-date-filter">完成</button></div>
+      </div>` : ""}
+    </div>
+  `;
 }
 
 function riskBanner() {
@@ -203,7 +292,7 @@ function renderTodo() {
   const buckets = { overdue: [], today: [], upcoming: [], waiting: [] };
   const ownedTasks = state.tasks.filter((task) => taskBelongsToUser(task, user));
   const visibleTasks = ownedTasks.filter((task) => {
-    if (!matchesTodoDate(task, todoFilters.date)) return false;
+    if (!matchesTodoDate(task, todoFilters)) return false;
     if (todoFilters.status !== "all") return task.currentStage === todoFilters.status;
     return !task.archived && task.currentStage !== STAGES.CANCELLED;
   });
@@ -234,13 +323,7 @@ function renderTodo() {
       ${metricCard("48h 内发布", counts.soon, "留意审核缓冲", "mint")}
     </section>
     <section class="filter-bar todo-filter-bar" aria-label="我的待办筛选">
-      <select id="todo-date-filter">
-        <option value="all">全部发布日期</option>
-        <option value="today" ${todoFilters.date === "today" ? "selected" : ""}>今天发布</option>
-        <option value="next3" ${todoFilters.date === "next3" ? "selected" : ""}>未来 3 天</option>
-        <option value="next7" ${todoFilters.date === "next7" ? "selected" : ""}>未来 7 天</option>
-        <option value="overdue" ${todoFilters.date === "overdue" ? "selected" : ""}>已过计划发布日期</option>
-      </select>
+      ${renderTodoDateFilter()}
       <select id="todo-status-filter">
         <option value="all">全部状态</option>
         ${Object.entries(STAGE_META).map(([stage, meta]) => `<option value="${stage}" ${todoFilters.status === stage ? "selected" : ""}>${meta.label}</option>`).join("")}
@@ -683,12 +766,46 @@ function handleClick(event) {
     dateInput.focus();
     try { dateInput.showPicker?.(); } catch { /* 浏览器不支持时保留原生日期输入行为 */ }
   }
+  const datePreset = event.target.closest("[data-date-preset]")?.dataset.datePreset;
+  if (datePreset) {
+    todoFilters = { ...todoFilters, date: datePreset, start: "", end: "" };
+    datePickerOpen = false;
+    render();
+    return;
+  }
+  const calendarDate = event.target.closest("[data-calendar-date]")?.dataset.calendarDate;
+  if (calendarDate) {
+    if (todoFilters.date !== "custom" || !todoFilters.start || todoFilters.end) {
+      todoFilters = { ...todoFilters, date: "custom", start: calendarDate, end: "" };
+    } else if (calendarDate < todoFilters.start) {
+      todoFilters = { ...todoFilters, start: calendarDate, end: "" };
+    } else {
+      todoFilters = { ...todoFilters, end: calendarDate };
+    }
+    render();
+    return;
+  }
+  const calendarShift = event.target.closest("[data-calendar-shift]")?.dataset.calendarShift;
+  if (calendarShift) {
+    shiftCalendarMonth(Number(calendarShift));
+    render();
+    return;
+  }
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) { state.activeView = view; selectedTaskId = null; modal = null; persist(state); return; }
   const actionEl = event.target.closest("[data-action]");
   if (actionEl) {
     const action = actionEl.dataset.action;
     if (action === "open-create") modal = { type: "create" };
+    if (action === "toggle-date-filter") {
+      datePickerOpen = !datePickerOpen;
+      if (datePickerOpen) calendarMonth = (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+    }
+    if (action === "close-date-filter") datePickerOpen = false;
+    if (action === "clear-date-filter") {
+      todoFilters = { ...todoFilters, date: "all", start: "", end: "" };
+      calendarMonth = shanghaiDateKey(new Date()).slice(0, 7);
+    }
     if (action === "switch-user") modal = { type: "user" };
     if (action === "close-modal") modal = null;
     if (action === "close-drawer") selectedTaskId = null;
@@ -742,7 +859,6 @@ function toggleTemplateEnabled(level) {
 }
 
 function handleChange(event) {
-  if (event.target.id === "todo-date-filter") { todoFilters.date = event.target.value; render(); }
   if (event.target.id === "todo-status-filter") { todoFilters.status = event.target.value; render(); }
   if (event.target.id === "filter-level") { filters.level = event.target.value; render(); }
   if (event.target.id === "filter-owner") { filters.owner = event.target.value; render(); }
@@ -781,7 +897,13 @@ app.addEventListener("submit", handleSubmit);
 app.addEventListener("change", handleChange);
 app.addEventListener("input", handleInput);
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") { modal = null; selectedTaskId = null; render(); }
+  if (event.key === "Escape") { modal = null; selectedTaskId = null; datePickerOpen = false; render(); }
+});
+document.addEventListener("click", (event) => {
+  if (datePickerOpen && !event.target.closest(".date-filter-control")) {
+    datePickerOpen = false;
+    render();
+  }
 });
 
 createIdentityAdapter(state);
