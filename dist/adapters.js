@@ -1,4 +1,6 @@
-import { USERS } from "./store.js";
+const assetVersion = new URL(import.meta.url).searchParams.get("v");
+const assetSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : "";
+const { USERS } = await import(`./store.js${assetSuffix}`);
 
 export function createIdentityAdapter(state) {
   const external = globalThis.__VIDEO_BOARD_CONFIG__?.currentUser;

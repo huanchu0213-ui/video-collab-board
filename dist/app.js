@@ -1,10 +1,17 @@
-import {
+const assetVersion = new URL(import.meta.url).searchParams.get("v");
+const assetSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : "";
+const [domainModule, storeModule, adapterModule] = await Promise.all([
+  import(`./domain.js${assetSuffix}`),
+  import(`./store.js${assetSuffix}`),
+  import(`./adapters.js${assetSuffix}`)
+]);
+const {
   ACTIONS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
   applyAction, canAct, createTask, deadlineForCurrentStage, evaluateReminders,
   getResponsible, taskBucket, validateTemplate
-} from "./domain.js";
-import { USERS, currentUser, loadState, resetState, saveState, stageLabel } from "./store.js";
-import { createIdentityAdapter, createReminderAdapter } from "./adapters.js";
+} = domainModule;
+const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
+const { createIdentityAdapter, createReminderAdapter } = adapterModule;
 
 let state = loadState();
 if (state.activeView === "admin" && currentUser(state).role !== "admin") state.activeView = "todo";

@@ -3,17 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <meta name="theme-color" content="#1c1814" />
     <meta name="description" content="面向编导与剪辑的达人视频协作看板" />
     <title>达人视频协作看板</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      window.__VIDEO_BOARD_ASSET_VERSION__ = Date.now().toString(36);
+      const boardStyles = document.createElement("link");
+      boardStyles.rel = "stylesheet";
+      boardStyles.href = `./styles.css?v=${window.__VIDEO_BOARD_ASSET_VERSION__}`;
+      document.head.append(boardStyles);
+    </script>
   </head>
   <body>
     <div id="app"></div>
     <div id="toast-root" aria-live="polite"></div>
-    <script type="module" src="./app.js"></script>
+    <script type="module">
+      const version = window.__VIDEO_BOARD_ASSET_VERSION__ || Date.now().toString(36);
+      import(`./app.js?v=${version}`);
+    </script>
   </body>
 </html>

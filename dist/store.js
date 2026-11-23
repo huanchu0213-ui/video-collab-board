@@ -1,4 +1,6 @@
-import { STAGES, STAGE_META } from "./domain.js";
+const assetVersion = new URL(import.meta.url).searchParams.get("v");
+const assetSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : "";
+const { STAGES, STAGE_META } = await import(`./domain.js${assetSuffix}`);
 
 const STORAGE_KEY = "video-collab-board:v1";
 const DEFAULT_ACCOUNTS = ["万万", "丝丝", "周周", "西西", "女团集合号"];
