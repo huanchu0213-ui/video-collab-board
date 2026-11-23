@@ -59,6 +59,17 @@ test("已有素材任务跳过拍摄，B/C 跳过中台初审", () => {
   assert.match(editing.materialAttachments[0].dataUrl, /^data:/);
 });
 
+test("待拍摄任务完成拍摄时同步确认素材并直接进入剪辑", () => {
+  let task = createTask({ title: "拍摄交接", account: "万万", level: "B", publishAt, needsShoot: true }, director, templates, now);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  assert.equal(task.currentStage, STAGES.WAITING_SHOOT);
+  assert.throws(() => applyAction(task, ACTIONS.SHOOT_COMPLETE, director, {}, now), /请选择素材给予方式/);
+  task = applyAction(task, ACTIONS.SHOOT_COMPLETE, director, { materialMethod: "现场传输", note: "现场交接完成" }, now);
+  assert.equal(task.currentStage, STAGES.EDITING);
+  assert.equal(task.materialMethod, "现场传输");
+  assert.equal(task.events.at(-1).toStage, STAGES.EDITING);
+});
+
 test("角色权限阻止非剪辑认领和非负责人审核", () => {
   const task = createTask({ title: "权限测试", account: "万万", level: "B", publishAt, needsShoot: false }, director, templates, now);
   assert.throws(() => applyAction(task, ACTIONS.CLAIM, director, {}, now), /只有剪辑/);
@@ -93,6 +104,16 @@ test("退回修改保留旧版本并生成新版本", () => {
   assert.equal(task.versions[0].deliveryNote, "项目 V1");
   assert.equal(task.versions[1].number, 2);
   assert.equal(task.versions[1].deliveryMethod, "飞书");
+});
+
+test("退回修改允许不填写备注", () => {
+  let task = createTask({ title: "无备注退回", account: "丝丝", level: "C", publishAt, needsShoot: false }, director, templates, now);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "剪映云空间" }, now);
+  task = applyAction(task, ACTIONS.REJECT, director, {}, now);
+  assert.equal(task.currentStage, STAGES.MODIFYING);
+  assert.equal(task.events.at(-1).note, "");
 });
 
 test("提交成片必须选择交片渠道", () => {

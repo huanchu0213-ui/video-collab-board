@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { currentUser, defaultState } from "../dist/store.js";
+import { currentUser, defaultState, loadState } from "../dist/store.js";
 
 test("defaultState 为默认成员补齐启用状态和页面权限", () => {
   const state = defaultState();
@@ -20,4 +20,20 @@ test("当前身份停用时回退到其他启用身份", () => {
   const disabled = { id: "disabled", name: "已停用", role: "director", enabled: false, permissions: ["todo"] };
   const active = { id: "active", name: "仍启用", role: "admin", enabled: true, permissions: ["todo", "board", "admin"] };
   assert.equal(currentUser({ users: [disabled, active], currentUserId: disabled.id }), active);
+});
+
+test("旧数据中拍摄后待素材任务自动并入剪辑中", () => {
+  const state = defaultState();
+  state.tasks[0] = { ...state.tasks[0], needsShoot: true, currentStage: "waiting_material", previousStage: "waiting_shoot" };
+  const originalStorage = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => JSON.stringify(state) };
+  try {
+    const loaded = loadState();
+    assert.equal(loaded.tasks[0].currentStage, "editing");
+    assert.equal(loaded.tasks[0].previousStage, "waiting_shoot");
+    assert.equal(loaded.tasks[0].events.at(-1).action, "merge_shoot_material");
+    assert.equal(loaded.tasks[0].events.at(-1).toStage, "editing");
+  } finally {
+    globalThis.localStorage = originalStorage;
+  }
 });

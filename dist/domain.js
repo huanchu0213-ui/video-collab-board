@@ -47,7 +47,7 @@ export const ACTIONS = {
 const ACTION_LABELS = {
   [ACTIONS.CREATE]: "创建并发布任务",
   [ACTIONS.CLAIM]: "认领任务",
-  [ACTIONS.SHOOT_COMPLETE]: "确认拍摄完成",
+  [ACTIONS.SHOOT_COMPLETE]: "完成拍摄并确认素材",
   [ACTIONS.MATERIAL_READY]: "确认素材就绪",
   [ACTIONS.SUBMIT_CUT]: "提交成片版本",
   [ACTIONS.APPROVE]: "审核通过",
@@ -243,6 +243,27 @@ function authorizeAction(task, action, actor) {
   if (directorActions.includes(action) && actor.id !== task.directorId) throw new Error("只有负责编导可以执行该操作");
 }
 
+function completeMaterialHandoff(task, action, actor, payload, now) {
+  if (!payload.materialMethod?.trim()) throw new Error("请选择素材给予方式");
+  const attachment = payload.attachment?.name ? {
+    name: payload.attachment.name,
+    size: Number(payload.attachment.size) || 0,
+    type: payload.attachment.type || "",
+    lastModified: Number(payload.attachment.lastModified) || null,
+    dataUrl: /^data:/.test(payload.attachment.dataUrl || "") ? payload.attachment.dataUrl : ""
+  } : null;
+  const note = payload.note?.trim() || "";
+  const next = move(task, STAGES.EDITING, actor, action, now, {
+    note,
+    metadata: { materialMethod: payload.materialMethod.trim(), attachment: attachment?.name || "" }
+  });
+  next.materialUrl = "";
+  next.materialMethod = payload.materialMethod.trim();
+  next.materialNote = note;
+  next.materialAttachments = attachment ? [...(task.materialAttachments || []), attachment] : [...(task.materialAttachments || [])];
+  return next;
+}
+
 export function applyAction(task, action, actor, payload = {}, now = new Date()) {
   authorizeAction(task, action, actor);
   switch (action) {
@@ -254,29 +275,13 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
       next.editorName = actor.name;
       return next;
     }
-    case ACTIONS.SHOOT_COMPLETE:
+    case ACTIONS.SHOOT_COMPLETE: {
       assertStage(task, [STAGES.WAITING_SHOOT], action);
-      return move(task, STAGES.WAITING_MATERIAL, actor, action, now, { note: payload.note });
+      return completeMaterialHandoff(task, action, actor, payload, now);
+    }
     case ACTIONS.MATERIAL_READY: {
       assertStage(task, [STAGES.WAITING_MATERIAL], action);
-      if (!payload.materialMethod?.trim()) throw new Error("请选择素材给予方式");
-      const attachment = payload.attachment?.name ? {
-        name: payload.attachment.name,
-        size: Number(payload.attachment.size) || 0,
-        type: payload.attachment.type || "",
-        lastModified: Number(payload.attachment.lastModified) || null,
-        dataUrl: /^data:/.test(payload.attachment.dataUrl || "") ? payload.attachment.dataUrl : ""
-      } : null;
-      const note = payload.note?.trim() || "";
-      const next = move(task, STAGES.EDITING, actor, action, now, {
-        note,
-        metadata: { materialMethod: payload.materialMethod.trim(), attachment: attachment?.name || "" }
-      });
-      next.materialUrl = "";
-      next.materialMethod = payload.materialMethod.trim();
-      next.materialNote = note;
-      next.materialAttachments = attachment ? [...(task.materialAttachments || []), attachment] : [...(task.materialAttachments || [])];
-      return next;
+      return completeMaterialHandoff(task, action, actor, payload, now);
     }
     case ACTIONS.SUBMIT_CUT: {
       assertStage(task, [STAGES.EDITING, STAGES.MODIFYING], action);
@@ -307,7 +312,6 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
       );
     case ACTIONS.REJECT:
       assertStage(task, [STAGES.INITIAL_REVIEW, STAGES.DIRECTOR_REVIEW], action);
-      if (!payload.note?.trim()) throw new Error("退回修改必须填写原因");
       return move(task, STAGES.MODIFYING, actor, action, now, { note: payload.note });
     case ACTIONS.PUBLISH:
       assertStage(task, [STAGES.READY_PUBLISH], action);

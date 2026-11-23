@@ -140,7 +140,7 @@ function seedTasks() {
     baseTask({ title: "二手手机避坑三件事", account: "女团集合号", level: "B", currentStage: STAGES.DIRECTOR_REVIEW, editorId: "u_editor_chen", editorName: "陈川", directorId: "u_director_gu", directorName: "顾晨曦", needsShoot: false, versions: [{ id: "v1", number: 1, url: "https://example.com/cut/3", note: "首版", submittedBy: "陈川", submittedAt: isoFromNow(-3) }] }, 2),
     baseTask({ title: "手机壳盲测快问快答", account: "周周", level: "C", currentStage: STAGES.WAITING_CLAIM }, 3),
     baseTask({ title: "门店黄金回收 Vlog", account: "西西", level: "A", currentStage: STAGES.WAITING_SHOOT, editorId: "u_editor_chen", editorName: "陈川" }, 4),
-    baseTask({ title: "折叠屏通勤一天", account: "万万", level: "B", currentStage: STAGES.WAITING_MATERIAL, editorId: "u_editor_lin", editorName: "林澄" }, 5),
+    baseTask({ title: "折叠屏通勤一天", account: "万万", level: "B", currentStage: STAGES.WAITING_MATERIAL, editorId: "u_editor_lin", editorName: "林澄", needsShoot: false }, 5),
     baseTask({ title: "旧机数据迁移教程", account: "丝丝", level: "C", currentStage: STAGES.MODIFYING, editorId: "u_editor_chen", editorName: "陈川", needsShoot: false, materialUrl: "https://example.com/material/7", versions: [{ id: "v1", number: 1, url: "https://example.com/cut/7", note: "需调整字幕", submittedBy: "陈川", submittedAt: isoFromNow(-7) }] }, 6),
     baseTask({ title: "双十一门店战报", account: "女团集合号", level: "A", currentStage: STAGES.READY_PUBLISH, editorId: "u_editor_lin", editorName: "林澄", directorId: "u_director_gu", directorName: "顾晨曦", versions: [{ id: "v1", number: 1, url: "https://example.com/cut/8", note: "终版", submittedBy: "林澄", submittedAt: isoFromNow(-20) }] }, 7),
     baseTask({ title: "回收知识一分钟", account: "周周", level: "C", currentStage: STAGES.PUBLISHED, editorId: "u_editor_lin", editorName: "林澄", needsShoot: false }, 8)
@@ -189,17 +189,40 @@ function normalizeState(parsed) {
         ? parsed.settings.cutDeliveryMethods
         : defaults.settings.cutDeliveryMethods
     },
-    tasks: (parsed.tasks || []).map((task) => ({
-      ...task,
-      materialMethod: task.materialMethod || (task.materialUrl ? "飞书" : ""),
-      materialNote: task.materialNote || "",
-      materialAttachments: Array.isArray(task.materialAttachments) ? task.materialAttachments : [],
-      versions: (task.versions || []).map((version) => ({
-        ...version,
-        deliveryMethod: version.deliveryMethod || (version.url ? "链接" : ""),
-        deliveryNote: version.deliveryNote || ""
-      }))
-    }))
+    tasks: (parsed.tasks || []).map((task) => {
+      const mergedShootMaterialStage = task.needsShoot !== false && task.currentStage === STAGES.WAITING_MATERIAL;
+      const events = Array.isArray(task.events) ? task.events : [];
+      const migratedEvents = mergedShootMaterialStage && !events.some((event) => event.action === "merge_shoot_material")
+        ? [...events, {
+          id: `evt_merge_${task.id}`,
+          taskId: task.id,
+          action: "merge_shoot_material",
+          label: "流程升级：拍摄与素材交接已合并",
+          actorId: "system",
+          actorName: "系统",
+          role: "system",
+          at: task.updatedAt || task.stageStartedAt || new Date().toISOString(),
+          fromStage: STAGES.WAITING_MATERIAL,
+          toStage: STAGES.EDITING,
+          note: "历史待素材任务已自动进入剪辑中",
+          metadata: {}
+        }]
+        : events;
+      return {
+        ...task,
+        currentStage: mergedShootMaterialStage ? STAGES.EDITING : task.currentStage,
+        previousStage: mergedShootMaterialStage ? STAGES.WAITING_SHOOT : task.previousStage,
+        events: migratedEvents,
+        materialMethod: task.materialMethod || (task.materialUrl ? "飞书" : ""),
+        materialNote: task.materialNote || "",
+        materialAttachments: Array.isArray(task.materialAttachments) ? task.materialAttachments : [],
+        versions: (task.versions || []).map((version) => ({
+          ...version,
+          deliveryMethod: version.deliveryMethod || (version.url ? "链接" : ""),
+          deliveryNote: version.deliveryNote || ""
+        }))
+      };
+    })
   };
 }
 

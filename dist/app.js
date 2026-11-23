@@ -551,7 +551,8 @@ function renderDrawer() {
 }
 
 function renderProgress(task) {
-  const stages = [STAGES.WAITING_CLAIM, ...(task.needsShoot ? [STAGES.WAITING_SHOOT] : []), STAGES.WAITING_MATERIAL, STAGES.EDITING, ...(task.requiresInitialReview ? [STAGES.INITIAL_REVIEW] : []), STAGES.DIRECTOR_REVIEW, STAGES.MODIFYING, STAGES.READY_PUBLISH, STAGES.PUBLISHED];
+  const materialStage = task.needsShoot ? STAGES.WAITING_SHOOT : STAGES.WAITING_MATERIAL;
+  const stages = [STAGES.WAITING_CLAIM, materialStage, STAGES.EDITING, ...(task.requiresInitialReview ? [STAGES.INITIAL_REVIEW] : []), STAGES.DIRECTOR_REVIEW, STAGES.MODIFYING, STAGES.READY_PUBLISH, STAGES.PUBLISHED];
   const current = stages.indexOf(task.currentStage);
   return stages.map((stage, index) => `<div class="progress-step ${index < current ? "done" : index === current ? "current" : ""}"><i>${index < current ? "✓" : index + 1}</i><span>${stageLabel(stage)}</span></div>`).join("");
 }
@@ -679,7 +680,7 @@ function actionSpec(task, action) {
     [ACTIONS.RESUME]: { title: "恢复任务", desc: "任务将回到暂停前的环节并重新参与提醒", note: "恢复说明（可选）", submit: "恢复任务" },
     [ACTIONS.CANCEL]: { title: "取消任务", desc: "取消后停止提醒并保留全部历史记录", note: "取消原因", submit: "确认取消", danger: true },
     [ACTIONS.APPROVE]: { title: "审核通过", desc: task.currentStage === STAGES.INITIAL_REVIEW ? "通过后进入编导终审" : "通过后进入待发布", note: "审核意见（可选）", submit: "通过" },
-    [ACTIONS.REJECT]: { title: "退回修改", desc: "请写清楚修改点，剪辑提交后会生成新版本", note: "修改意见", submit: "退回剪辑", danger: true }
+    [ACTIONS.REJECT]: { title: "退回修改", desc: "退回后剪辑提交会生成新版本", note: "修改意见（可选）", submit: "退回剪辑", danger: true }
   };
   return specs[action] || { title: "确认操作", desc: "系统将自动记录操作人和时间", submit: "确认" };
 }
@@ -689,10 +690,12 @@ function renderActionModal() {
   if (!task) return "";
   if (modal.action === "open-review") {
     const version = task.versions.at(-1);
+    const reviewChoice = modal.reviewChoice;
     const delivery = version?.url
       ? `<a href="${escapeHtml(version.url)}" target="_blank" rel="noopener">打开成片 ${icon("link")}</a>`
       : `<p class="review-delivery">交片渠道：${escapeHtml(version?.deliveryMethod || "未记录")}${version?.deliveryNote ? ` · ${escapeHtml(version.deliveryNote)}` : ""}</p>`;
-    return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "审核结果将决定下一步流程", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><div class="review-actions"><button class="approve-button" data-review-action="${ACTIONS.APPROVE}" data-task-id="${task.id}">✓ 通过审核</button><button class="reject-button" data-review-action="${ACTIONS.REJECT}" data-task-id="${task.id}">↩ 退回修改</button></div>`);
+    const reviewForm = reviewChoice ? `<form id="action-form" class="review-inline-form"><input type="hidden" name="action" value="${reviewChoice}"/><label class="form-field"><span>${reviewChoice === ACTIONS.APPROVE ? "审核备注（可选）" : "修改备注（可选）"}</span><textarea name="note" placeholder="${reviewChoice === ACTIONS.APPROVE ? "可补充通过说明" : "可补充需要修改的内容"}"></textarea></label>${modalFooter(reviewChoice === ACTIONS.APPROVE ? "确认通过" : "确认退回", reviewChoice === ACTIONS.REJECT)}</form>` : "";
+    return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "选择审核结果后，可在当前窗口补充备注", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><div class="review-actions"><button class="approve-button ${reviewChoice === ACTIONS.APPROVE ? "selected" : ""}" aria-pressed="${reviewChoice === ACTIONS.APPROVE}" data-review-action="${ACTIONS.APPROVE}" data-task-id="${task.id}">✓ 通过审核</button><button class="reject-button ${reviewChoice === ACTIONS.REJECT ? "selected" : ""}" aria-pressed="${reviewChoice === ACTIONS.REJECT}" data-review-action="${ACTIONS.REJECT}" data-task-id="${task.id}">↩ 退回修改</button></div>${reviewForm}`);
   }
   if (modal.action === "more") {
     return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions"><button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button><button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
@@ -703,15 +706,16 @@ function renderActionModal() {
   if (modal.action === "transfer") {
     return modalShell("转交负责人", "只变更当前环节负责人，不修改历史记录", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.TRANSFER}"/><label class="form-field full"><span>新负责人</span><select name="userId" required><option value="">请选择</option>${activeUsers().map((user) => `<option value="${user.id}">${escapeHtml(user.name)} · ${roleLabel(user.role)}</option>`).join("")}</select></label><label class="form-field full"><span>转交原因</span><textarea name="note" required></textarea></label>${modalFooter("确认转交")}</form>`);
   }
-  if (modal.action === ACTIONS.MATERIAL_READY) {
-    return modalShell("确认素材就绪", "选择素材给予方式后进入剪辑环节", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.MATERIAL_READY}"/><label class="form-field full"><span>素材给予方式 <em>*</em></span><select name="materialMethod" required><option value="">请选择</option>${state.settings.materialDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>附件（可选）</span><input name="attachment" type="file"/><small class="field-help">可补充交接单或素材说明文件；演示环境支持 1MB 以内附件。</small></label><label class="form-field full"><span>备注（可选）</span><textarea name="note" placeholder="例如：素材已放入对应文件夹，缺少的镜头稍后补充"></textarea></label>${modalFooter("确认并推进")}</form>`);
+  if ([ACTIONS.SHOOT_COMPLETE, ACTIONS.MATERIAL_READY].includes(modal.action)) {
+    const completesShoot = modal.action === ACTIONS.SHOOT_COMPLETE;
+    return modalShell(completesShoot ? "完成拍摄并交接素材" : "确认素材就绪", completesShoot ? "一次确认拍摄完成与素材给予方式，提交后直接进入剪辑环节" : "选择素材给予方式后进入剪辑环节", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${modal.action}"/><label class="form-field full"><span>素材给予方式 <em>*</em></span><select name="materialMethod" required><option value="">请选择</option>${state.settings.materialDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>附件（可选）</span><input name="attachment" type="file"/><small class="field-help">可补充交接单或素材说明文件；演示环境支持 1MB 以内附件。</small></label><label class="form-field full"><span>备注（可选）</span><textarea name="note" placeholder="例如：素材已交接，缺少的镜头稍后补充"></textarea></label>${modalFooter(completesShoot ? "确认并进入剪辑" : "确认并推进")}</form>`);
   }
   if (modal.action === ACTIONS.SUBMIT_CUT) {
     const spec = actionSpec(task, modal.action);
     return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.SUBMIT_CUT}"/><label class="form-field full"><span>交片渠道 <em>*</em></span><select name="cutDeliveryMethod" required><option value="">请选择</option>${state.settings.cutDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>交片位置 / 备注（可选）</span><textarea name="deliveryNote" placeholder="例如：剪映云空间项目名称、飞书文件夹位置或现场接收人"></textarea></label><label class="form-field full"><span>${spec.note}</span><textarea name="note" placeholder="${spec.note}"></textarea></label>${modalFooter(spec.submit)}</form>`);
   }
   const spec = actionSpec(task, modal.action);
-  return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${modal.action}"/>${spec.url ? `<label class="form-field full"><span>${spec.url}</span><input name="url" type="url" ${modal.action === ACTIONS.PUBLISH ? "" : "required"} placeholder="https://"/></label>` : ""}${spec.note ? `<label class="form-field full"><span>${spec.note}</span><textarea name="note" ${[ACTIONS.PAUSE, ACTIONS.CANCEL, ACTIONS.REJECT].includes(modal.action) ? "required" : ""} placeholder="${spec.note}"></textarea></label>` : ""}${modalFooter(spec.submit, spec.danger)}</form>`);
+  return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${modal.action}"/>${spec.url ? `<label class="form-field full"><span>${spec.url}</span><input name="url" type="url" ${modal.action === ACTIONS.PUBLISH ? "" : "required"} placeholder="https://"/></label>` : ""}${spec.note ? `<label class="form-field full"><span>${spec.note}</span><textarea name="note" ${[ACTIONS.PAUSE, ACTIONS.CANCEL].includes(modal.action) ? "required" : ""} placeholder="${spec.note}"></textarea></label>` : ""}${modalFooter(spec.submit, spec.danger)}</form>`);
 }
 
 function modalFooter(label, danger = false) {
@@ -725,7 +729,7 @@ function modalShell(title, subtitle, content, wide = false) {
 function openAction(taskId, action) {
   const task = state.tasks.find((item) => item.id === taskId);
   if (!task) return;
-  if ([ACTIONS.CLAIM, ACTIONS.SHOOT_COMPLETE].includes(action)) {
+  if (action === ACTIONS.CLAIM) {
     performAction(taskId, action, {});
     return;
   }
@@ -985,7 +989,18 @@ function handleClick(event) {
   const taskAction = event.target.closest("[data-task-action]");
   if (taskAction) { event.stopPropagation(); openAction(taskAction.dataset.taskId, taskAction.dataset.taskAction); return; }
   const reviewAction = event.target.closest("[data-review-action]");
-  if (reviewAction) { modal = { type: "action", taskId: reviewAction.dataset.taskId, action: reviewAction.dataset.reviewAction }; render(); return; }
+  if (reviewAction) {
+    const choice = reviewAction.dataset.reviewAction;
+    if (modal?.type === "action" && modal.action === "open-review" && [ACTIONS.APPROVE, ACTIONS.REJECT].includes(choice)) {
+      modal = { ...modal, reviewChoice: choice };
+      render();
+      requestAnimationFrame(() => document.querySelector(".review-inline-form textarea")?.focus());
+      return;
+    }
+    modal = { type: "action", taskId: reviewAction.dataset.taskId, action: choice };
+    render();
+    return;
+  }
   const moreAction = event.target.closest("[data-more-action]");
   if (moreAction) { modal = { type: "action", taskId: moreAction.dataset.taskId, action: moreAction.dataset.moreAction }; render(); return; }
   const openTask = event.target.closest("[data-open-task]")?.dataset.openTask || event.target.closest(".task-card")?.dataset.taskId;

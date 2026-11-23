@@ -391,6 +391,11 @@ body {
 .user-option small, .review-preview span, .review-preview a { font-size: 12px; }
 .review-preview a { color: #8c5b36; }
 .approve-button { border-color: #d8bea9; color: #68452f; background: #fbede2; }
+.approve-button.selected { border-color: #8e674b; background: #f3dfd0; box-shadow: inset 0 0 0 1px #8e674b; }
+.reject-button.selected { border-color: #b65b4e; background: #fbe2dd; box-shadow: inset 0 0 0 1px #b65b4e; }
+.review-inline-form { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); display: grid; gap: 12px; }
+.review-inline-form .form-field textarea { min-height: 82px; }
+.review-inline-form .modal-footer { margin-top: 0; }
 .more-actions button:hover { background: #fbf3ed; }
 .more-actions strong { font-size: 13px; }
 .more-actions span { font-size: 12px; }
