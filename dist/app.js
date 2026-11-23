@@ -211,16 +211,44 @@ const TODO_DATE_PRESETS = [
   ["overdue", "已过计划发布日期"]
 ];
 
+function availableTodoYears() {
+  const user = currentUser(state);
+  const years = state.tasks
+    .filter((task) => taskBelongsToUser(task, user) && !task.archived && task.currentStage !== STAGES.CANCELLED)
+    .map((task) => Number(shanghaiDateKey(task.publishAt).slice(0, 4)))
+    .filter(Number.isFinite);
+  const uniqueYears = [...new Set(years)].sort((left, right) => left - right);
+  return uniqueYears.length ? uniqueYears : [Number(shanghaiDateKey(new Date()).slice(0, 4))];
+}
+
 function ensureCalendarMonth() {
-  if (calendarMonth) return;
-  calendarMonth = (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+  const preferred = calendarMonth || (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+  const [preferredYear, preferredMonth] = preferred.split("-").map(Number);
+  const years = availableTodoYears();
+  const year = years.includes(preferredYear)
+    ? preferredYear
+    : years.reduce((closest, candidate) => Math.abs(candidate - preferredYear) < Math.abs(closest - preferredYear) ? candidate : closest);
+  calendarMonth = `${year}-${String(preferredMonth).padStart(2, "0")}`;
 }
 
 function shiftCalendarMonth(offset) {
   ensureCalendarMonth();
-  const [year, month] = calendarMonth.split("-").map(Number);
-  const next = new Date(Date.UTC(year, month - 1 + offset, 1));
-  calendarMonth = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}`;
+  const years = availableTodoYears();
+  let [year, month] = calendarMonth.split("-").map(Number);
+  if (offset > 0 && month === 12) {
+    const nextYear = years.find((candidate) => candidate > year);
+    if (!nextYear) return;
+    year = nextYear;
+    month = 1;
+  } else if (offset < 0 && month === 1) {
+    const previousYear = [...years].reverse().find((candidate) => candidate < year);
+    if (!previousYear) return;
+    year = previousYear;
+    month = 12;
+  } else {
+    month += offset;
+  }
+  calendarMonth = `${year}-${String(month).padStart(2, "0")}`;
 }
 
 function compactDateLabel(dateKey) {
@@ -239,10 +267,8 @@ function todoDateLabel() {
 function renderDateCalendar() {
   ensureCalendarMonth();
   const [year, month] = calendarMonth.split("-").map(Number);
-  const currentYear = Number(shanghaiDateKey(new Date()).slice(0, 4));
-  const firstYear = Math.min(year, currentYear - 5);
-  const lastYear = Math.max(year, currentYear + 10);
-  const yearOptions = Array.from({ length: lastYear - firstYear + 1 }, (_, index) => firstYear + index)
+  const availableYears = availableTodoYears();
+  const yearOptions = availableYears
     .map((optionYear) => `<option value="${optionYear}" ${optionYear === year ? "selected" : ""}>${optionYear}年</option>`)
     .join("");
   const monthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
@@ -251,6 +277,8 @@ function renderDateCalendar() {
   const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const today = shanghaiDateKey(new Date());
+  const previousDisabled = year === availableYears[0] && month === 1;
+  const nextDisabled = year === availableYears.at(-1) && month === 12;
   const cells = [
     ...Array.from({ length: firstWeekday }, () => '<span class="calendar-day-placeholder" aria-hidden="true"></span>'),
     ...Array.from({ length: daysInMonth }, (_, index) => {
@@ -265,12 +293,12 @@ function renderDateCalendar() {
   ].join("");
   return `
     <div class="calendar-heading">
-      <button type="button" data-calendar-shift="-1">上月</button>
+      <button type="button" data-calendar-shift="-1" ${previousDisabled ? "disabled" : ""}>上月</button>
       <div class="calendar-month-selects">
         <select id="calendar-year-select" aria-label="选择年份">${yearOptions}</select>
         <select id="calendar-month-select" aria-label="选择月份">${monthOptions}</select>
       </div>
-      <button type="button" data-calendar-shift="1">下月</button>
+      <button type="button" data-calendar-shift="1" ${nextDisabled ? "disabled" : ""}>下月</button>
     </div>
     <div class="calendar-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
     <div class="calendar-grid">${cells}</div>
@@ -817,7 +845,10 @@ function handleClick(event) {
     if (action === "open-create") modal = { type: "create" };
     if (action === "toggle-date-filter") {
       datePickerOpen = !datePickerOpen;
-      if (datePickerOpen) calendarMonth = (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+      if (datePickerOpen) {
+        calendarMonth = (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+        ensureCalendarMonth();
+      }
     }
     if (action === "close-date-filter") datePickerOpen = false;
     if (action === "clear-date-filter") {

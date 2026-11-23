@@ -123,6 +123,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .calendar-heading { display: grid; grid-template-columns: 56px 1fr 56px; align-items: center; text-align: center; }
 .calendar-heading button { height: 30px; border: 0; border-radius: 6px; color: #816651; background: transparent; cursor: pointer; font-size: 12px; }
 .calendar-heading button:hover { background: #f6e9df; }
+.calendar-heading button:disabled { opacity: .35; background: transparent; cursor: not-allowed; }
 .calendar-month-selects { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px; }
 .todo-filter-bar .calendar-month-selects select { flex: 0 0 auto; min-width: 0; height: 32px; padding: 0 23px 0 8px; border: 1px solid #e1d0c2; border-radius: 7px; color: #4e4137; background-color: #fffdfa; background-position: calc(100% - 12px) 13px, calc(100% - 8px) 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .todo-filter-bar .calendar-month-selects select:first-child { width: 88px; }
