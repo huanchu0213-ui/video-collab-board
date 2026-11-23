@@ -232,6 +232,15 @@ function todoDateLabel() {
 function renderDateCalendar() {
   ensureCalendarMonth();
   const [year, month] = calendarMonth.split("-").map(Number);
+  const currentYear = Number(shanghaiDateKey(new Date()).slice(0, 4));
+  const firstYear = Math.min(year, currentYear - 5);
+  const lastYear = Math.max(year, currentYear + 10);
+  const yearOptions = Array.from({ length: lastYear - firstYear + 1 }, (_, index) => firstYear + index)
+    .map((optionYear) => `<option value="${optionYear}" ${optionYear === year ? "selected" : ""}>${optionYear}年</option>`)
+    .join("");
+  const monthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
+    .map((optionMonth) => `<option value="${optionMonth}" ${optionMonth === month ? "selected" : ""}>${optionMonth}月</option>`)
+    .join("");
   const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const today = shanghaiDateKey(new Date());
@@ -250,7 +259,10 @@ function renderDateCalendar() {
   return `
     <div class="calendar-heading">
       <button type="button" data-calendar-shift="-1">上月</button>
-      <strong>${year}年${month}月</strong>
+      <div class="calendar-month-selects">
+        <select id="calendar-year-select" aria-label="选择年份">${yearOptions}</select>
+        <select id="calendar-month-select" aria-label="选择月份">${monthOptions}</select>
+      </div>
       <button type="button" data-calendar-shift="1">下月</button>
     </div>
     <div class="calendar-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
@@ -777,10 +789,9 @@ function handleClick(event) {
   if (calendarDate) {
     if (todoFilters.date !== "custom" || !todoFilters.start || todoFilters.end) {
       todoFilters = { ...todoFilters, date: "custom", start: calendarDate, end: "" };
-    } else if (calendarDate < todoFilters.start) {
-      todoFilters = { ...todoFilters, start: calendarDate, end: "" };
     } else {
-      todoFilters = { ...todoFilters, end: calendarDate };
+      const [start, end] = [todoFilters.start, calendarDate].sort();
+      todoFilters = { ...todoFilters, start, end };
     }
     render();
     return;
@@ -859,6 +870,16 @@ function toggleTemplateEnabled(level) {
 }
 
 function handleChange(event) {
+  if (event.target.id === "calendar-year-select") {
+    ensureCalendarMonth();
+    calendarMonth = `${event.target.value}-${calendarMonth.slice(5, 7)}`;
+    render();
+  }
+  if (event.target.id === "calendar-month-select") {
+    ensureCalendarMonth();
+    calendarMonth = `${calendarMonth.slice(0, 4)}-${String(event.target.value).padStart(2, "0")}`;
+    render();
+  }
   if (event.target.id === "todo-status-filter") { todoFilters.status = event.target.value; render(); }
   if (event.target.id === "filter-level") { filters.level = event.target.value; render(); }
   if (event.target.id === "filter-owner") { filters.owner = event.target.value; render(); }

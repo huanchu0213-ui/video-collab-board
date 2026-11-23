@@ -121,9 +121,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .date-preset-list button:hover { border-color: #c9a88e; background: #fbf2eb; }
 .date-preset-list button.active { border-color: #9c6b47; color: #fff; background: #9c6b47; }
 .calendar-heading { display: grid; grid-template-columns: 56px 1fr 56px; align-items: center; text-align: center; }
-.calendar-heading strong { font-size: 14px; }
 .calendar-heading button { height: 30px; border: 0; border-radius: 6px; color: #816651; background: transparent; cursor: pointer; font-size: 12px; }
 .calendar-heading button:hover { background: #f6e9df; }
+.calendar-month-selects { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px; }
+.todo-filter-bar .calendar-month-selects select { flex: 0 0 auto; min-width: 0; height: 32px; padding: 0 23px 0 8px; border: 1px solid #e1d0c2; border-radius: 7px; color: #4e4137; background-color: #fffdfa; background-position: calc(100% - 12px) 13px, calc(100% - 8px) 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.todo-filter-bar .calendar-month-selects select:first-child { width: 88px; }
+.todo-filter-bar .calendar-month-selects select:last-child { width: 64px; }
+.todo-filter-bar .calendar-month-selects select:focus { border-color: #b78c6c; outline: 3px solid #f6e8de; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .calendar-weekdays { margin-top: 8px; color: #9a897b; text-align: center; font-size: 11px; }
 .calendar-weekdays span { padding: 6px 0; }
