@@ -4,14 +4,15 @@ const { USERS } = await import(`./store.js${assetSuffix}`);
 
 export function createIdentityAdapter(state) {
   const external = globalThis.__VIDEO_BOARD_CONFIG__?.currentUser;
+  const users = (Array.isArray(state.users) && state.users.length ? state.users : USERS).filter((user) => user.enabled !== false);
   if (external?.id && external?.name && external?.role) {
     return { mode: "feishu", user: external, users: [external], canSwitch: false };
   }
   return {
-    mode: "demo",
-    user: USERS.find((item) => item.id === state.currentUserId) || USERS[0],
-    users: USERS,
-    canSwitch: true
+    mode: state.settings?.identityMode === "feishu" ? "feishu" : "manual",
+    user: users.find((item) => item.id === state.currentUserId) || users[0] || USERS[0],
+    users,
+    canSwitch: state.settings?.identityMode !== "feishu"
   };
 }
 

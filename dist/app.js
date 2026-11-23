@@ -14,7 +14,7 @@ const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = sto
 const { createIdentityAdapter, createReminderAdapter } = adapterModule;
 
 let state = loadState();
-if (state.activeView === "admin" && currentUser(state).role !== "admin") state.activeView = "todo";
+if (!canAccessView(currentUser(state), state.activeView)) state.activeView = firstAccessibleView(currentUser(state));
 let filters = { query: "", level: "all", owner: "all", risk: "all" };
 let todoFilters = { date: "all", status: "all", start: "", end: "" };
 let datePickerOpen = false;
@@ -117,12 +117,33 @@ function roleLabel(role) {
   return ({ director: "编导", editor: "剪辑", reviewer: "中台审核", admin: "管理员" })[role] || role;
 }
 
+function configuredUsers() {
+  return Array.isArray(state.users) && state.users.length ? state.users : USERS;
+}
+
+function activeUsers() {
+  return configuredUsers().filter((user) => user.enabled !== false);
+}
+
+function canAccessView(user, view) {
+  if (!user) return false;
+  const permissions = Array.isArray(user.permissions)
+    ? user.permissions
+    : user.role === "admin" ? ["todo", "board", "admin"] : ["todo", "board"];
+  return permissions.includes(view) && (view !== "admin" || user.role === "admin");
+}
+
+function firstAccessibleView(user) {
+  return ["todo", "board", "admin"].find((view) => canAccessView(user, view)) || "todo";
+}
+
 function pageTitle() {
   return ({ todo: ["我的待办", "把今天需要推进的片子处理掉"], board: ["团队看板", "一眼看清每条片子卡在哪里"], admin: ["管理后台", "配置排期模板、角色与提醒策略"] })[state.activeView];
 }
 
 function renderShell(content) {
   const user = currentUser(state);
+  const manualIdentity = state.settings.identityMode !== "feishu";
   const [title, subtitle] = pageTitle();
   const templateReady = activeTemplates().length > 0 && activeTemplates().every((item) => item.confirmed && validateTemplate(item).valid);
   return `
@@ -133,18 +154,18 @@ function renderShell(content) {
           <div><strong>视频协作台</strong><small>PRODUCTION FLOW</small></div>
         </div>
         <nav class="nav-list" aria-label="主导航">
-          ${navButton("todo", "我的待办", "todo")}
-          ${navButton("board", "团队看板", "board")}
-          ${user.role === "admin" ? navButton("admin", "管理后台", "settings") : ""}
+          ${canAccessView(user, "todo") ? navButton("todo", "我的待办", "todo") : ""}
+          ${canAccessView(user, "board") ? navButton("board", "团队看板", "board") : ""}
+          ${canAccessView(user, "admin") ? navButton("admin", "管理后台", "settings") : ""}
         </nav>
         <div class="sidebar-note">
           <span class="pulse-dot"></span>
-          <div><strong>${state.settings.identityMode === "demo" ? "演示模式" : "飞书已连接"}</strong><small>${templateReady ? "排期模板已就绪" : "待确认排期模板"}</small></div>
+          <div><strong>${manualIdentity ? "手动身份模式" : "飞书 SSO"}</strong><small>${templateReady ? "排期模板已就绪" : "待确认排期模板"}</small></div>
         </div>
-        <button class="identity-card" data-action="switch-user" title="切换演示身份" aria-label="切换演示身份，当前为${escapeHtml(user.name)}">
+        <button class="identity-card" ${manualIdentity ? 'data-action="switch-user"' : "disabled"} title="${manualIdentity ? "切换手动身份" : "身份由飞书 SSO 自动识别"}" aria-label="${manualIdentity ? "切换手动身份" : "飞书 SSO 身份"}，当前为${escapeHtml(user.name)}">
           <div class="avatar">${escapeHtml(user.avatar || user.name.slice(0, 1))}</div>
           <div class="identity-copy"><strong>${escapeHtml(user.name)}</strong><span>${roleLabel(user.role)}</span></div>
-          <span class="identity-compact-label" aria-hidden="true">切换</span>
+          <span class="identity-compact-label" aria-hidden="true">${manualIdentity ? "切换" : "SSO"}</span>
           <span class="identity-chevron" aria-hidden="true">⌄</span>
         </button>
       </aside>
@@ -152,7 +173,7 @@ function renderShell(content) {
         <header class="topbar">
           <div><h1>${title}</h1><p>${subtitle}</p></div>
           <div class="top-actions">
-            <button class="mobile-identity-button" data-action="switch-user" title="切换演示身份" aria-label="切换演示身份，当前为${escapeHtml(user.name)}"><span>${escapeHtml(user.avatar || user.name.slice(0, 1))}</span><small>切换身份</small></button>
+            <button class="mobile-identity-button" ${manualIdentity ? 'data-action="switch-user"' : "disabled"} title="${manualIdentity ? "切换手动身份" : "身份由飞书 SSO 自动识别"}" aria-label="${manualIdentity ? "切换手动身份" : "飞书 SSO 身份"}，当前为${escapeHtml(user.name)}"><span>${escapeHtml(user.avatar || user.name.slice(0, 1))}</span><small>${manualIdentity ? "切换身份" : "SSO 身份"}</small></button>
             <div class="sync-pill"><span></span> 本地已同步</div>
             ${["director", "admin"].includes(user.role) ? `<button class="primary-button" data-action="open-create">${icon("plus")} 新建视频</button>` : ""}
           </div>
@@ -441,7 +462,7 @@ function renderBoard() {
     <section class="filter-bar">
       <label class="search-box">${icon("search")}<input id="board-search" value="${escapeHtml(filters.query)}" placeholder="搜索选题、账号或任务编号" /></label>
       <select id="filter-level"><option value="all">全部等级</option>${state.templates.map((template) => `<option value="${escapeHtml(template.level)}" ${filters.level === template.level ? "selected" : ""}>${escapeHtml(template.name)}${template.enabled === false ? "（已停用）" : ""}</option>`).join("")}</select>
-      <select id="filter-owner"><option value="all">全部负责人</option>${USERS.map((user) => `<option value="${user.id}" ${filters.owner === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("")}</select>
+      <select id="filter-owner"><option value="all">全部负责人</option>${activeUsers().map((user) => `<option value="${user.id}" ${filters.owner === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("")}</select>
       <select id="filter-risk"><option value="all">全部状态</option><option value="overdue" ${filters.risk === "overdue" ? "selected" : ""}>仅看超期</option><option value="soon" ${filters.risk === "soon" ? "selected" : ""}>48h内发布</option></select>
       <span class="result-count">${visible.length} 条任务</span>
     </section>
@@ -473,6 +494,8 @@ function renderAdmin() {
   const enabledTemplates = activeTemplates();
   const confirmedCount = enabledTemplates.filter((item) => item.confirmed && validateTemplate(item).valid).length;
   const allReady = enabledTemplates.length > 0 && confirmedCount === enabledTemplates.length;
+  const enabledUsers = activeUsers();
+  const manualIdentity = state.settings.identityMode !== "feishu";
   return renderShell(`
     <section class="admin-intro">
       <div><span class="eyebrow">WORKFLOW CONTROL</span><h2>按节点间隔配置，而不是从发布时间倒排。</h2><p>每个小时数表示“前一节点确认后，到下一节点确认前”的最长处理时间。</p></div>
@@ -486,7 +509,7 @@ function renderAdmin() {
       <aside class="admin-side">
         <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady ? "" : "disabled"}/><i></i></label><button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div></section>
         <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号、素材给予方式和交片渠道，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>交片渠道</strong><div class="catalog-chips">${state.settings.cutDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
-        <section class="settings-card"><h3>上线配置</h3><dl class="config-list"><div><dt>身份</dt><dd>飞书 SSO 适配器</dd></div><div><dt>剪辑池</dt><dd>剪辑中台</dd></div><div><dt>升级群</dt><dd>${escapeHtml(state.settings.groupName)}</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl></section>
+        <section class="settings-card"><div class="settings-icon">${icon("user")}</div><h3>平台权限与身份</h3><p>手动维护身份、角色与页面权限，也可切换为飞书 SSO 自动识别。</p><dl class="config-list"><div><dt>身份模式</dt><dd>${manualIdentity ? "手动配置" : "飞书 SSO"}</dd></div><div><dt>启用身份</dt><dd>${enabledUsers.length} 人</dd></div><div><dt>后台管理员</dt><dd>${enabledUsers.filter((user) => canAccessView(user, "admin")).length} 人</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl><button class="secondary-button full" data-action="open-access-settings">管理平台权限与身份</button></section>
         <button class="danger-link" data-action="reset-demo">恢复演示数据</button>
       </aside>
     </section>
@@ -566,6 +589,7 @@ function renderModal() {
   if (modal.type === "action") return renderActionModal();
   if (modal.type === "template") return renderTemplateModal();
   if (modal.type === "catalogs") return renderCatalogModal();
+  if (modal.type === "access") return renderAccessModal();
   return "";
 }
 
@@ -598,7 +622,36 @@ function renderCatalogModal() {
 }
 
 function renderUserModal() {
-  return modalShell("切换演示身份", "生产环境将由飞书登录自动识别", `<div class="user-grid">${USERS.map((user) => `<button class="user-option ${state.currentUserId === user.id ? "active" : ""}" data-user-id="${user.id}"><span>${escapeHtml(user.avatar)}</span><div><strong>${escapeHtml(user.name)}</strong><small>${roleLabel(user.role)}</small></div>${state.currentUserId === user.id ? "✓" : ""}</button>`).join("")}</div>`);
+  return modalShell("切换手动身份", "可切换范围由管理后台的身份配置决定", `<div class="user-grid">${activeUsers().map((user) => `<button class="user-option ${state.currentUserId === user.id ? "active" : ""}" data-user-id="${user.id}"><span>${escapeHtml(user.avatar)}</span><div><strong>${escapeHtml(user.name)}</strong><small>${roleLabel(user.role)} · ${(user.permissions || []).map((view) => ({ todo: "待办", board: "看板", admin: "后台" })[view]).filter(Boolean).join("/")}</small></div>${state.currentUserId === user.id ? "✓" : ""}</button>`).join("")}</div>`);
+}
+
+function renderAccessModal() {
+  const roles = [["director", "编导"], ["editor", "剪辑"], ["reviewer", "中台审核"], ["admin", "管理员"]];
+  const views = [["todo", "我的待办"], ["board", "团队看板"], ["admin", "管理后台"]];
+  const roleOptions = (selected = "director") => roles.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
+  const permissionChecks = (name, permissions = ["todo", "board"]) => views.map(([value, label]) => `<label><input type="checkbox" name="${name}" value="${value}" ${permissions.includes(value) ? "checked" : ""}/><span>${label}</span></label>`).join("");
+  const members = configuredUsers().map((user, index) => `
+    <div class="access-member-row">
+      <span class="access-avatar">${escapeHtml(user.avatar || user.name.slice(0, 1))}</span>
+      <label class="access-field"><span>姓名</span><input name="memberName_${index}" value="${escapeHtml(user.name)}" required maxlength="20" /></label>
+      <label class="access-field"><span>角色</span><select name="memberRole_${index}">${roleOptions(user.role)}</select></label>
+      <label class="access-enabled"><input type="checkbox" name="memberEnabled_${index}" ${user.enabled === false ? "" : "checked"}/><span>启用</span></label>
+      <div class="access-permissions"><strong>页面权限</strong>${permissionChecks(`memberPermission_${index}`, user.permissions)}</div>
+    </div>`).join("");
+  return modalShell("平台权限与身份", "角色决定流程操作权，页面权限决定导航入口", `
+    <form id="access-form" class="access-form">
+      <label class="form-field"><span>身份识别方式</span><select name="identityMode"><option value="manual" ${state.settings.identityMode === "feishu" ? "" : "selected"}>手动身份</option><option value="feishu" ${state.settings.identityMode === "feishu" ? "selected" : ""}>飞书 SSO</option></select><small class="field-help">飞书 SSO 模式下不允许手动切换当前身份。</small></label>
+      <div class="access-section-title"><strong>已配置身份</strong><span>${configuredUsers().length} 人</span></div>
+      <div class="access-member-list">${members}</div>
+      <div class="access-add-member">
+        <div class="access-section-title"><strong>新增身份（可选）</strong><span>保存后可继续新增</span></div>
+        <div class="access-add-grid"><label class="access-field"><span>姓名</span><input name="newMemberName" maxlength="20" placeholder="输入新成员姓名" /></label><label class="access-field"><span>角色</span><select name="newMemberRole">${roleOptions()}</select></label></div>
+        <div class="access-permissions"><strong>页面权限</strong>${permissionChecks("newMemberPermission")}</div>
+      </div>
+      <div class="form-warning">至少保留一位启用中、拥有管理后台权限的管理员，避免平台无法维护。</div>
+      ${modalFooter("保存权限与身份")}
+    </form>
+  `, true);
 }
 
 function renderTemplateModal() {
@@ -648,7 +701,7 @@ function renderActionModal() {
     return modalShell("调整发布日期", "系统将按已确认模板重新计算节点", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.RESCHEDULE}"/><label class="form-field full"><span>新计划发布日期</span><input name="publishAt" type="date" required/></label><label class="form-field full"><span>改期原因</span><textarea name="note" required placeholder="说明为什么需要改期"></textarea></label>${modalFooter("确认改期")}</form>`);
   }
   if (modal.action === "transfer") {
-    return modalShell("转交负责人", "只变更当前环节负责人，不修改历史记录", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.TRANSFER}"/><label class="form-field full"><span>新负责人</span><select name="userId" required><option value="">请选择</option>${USERS.map((user) => `<option value="${user.id}">${escapeHtml(user.name)} · ${roleLabel(user.role)}</option>`).join("")}</select></label><label class="form-field full"><span>转交原因</span><textarea name="note" required></textarea></label>${modalFooter("确认转交")}</form>`);
+    return modalShell("转交负责人", "只变更当前环节负责人，不修改历史记录", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.TRANSFER}"/><label class="form-field full"><span>新负责人</span><select name="userId" required><option value="">请选择</option>${activeUsers().map((user) => `<option value="${user.id}">${escapeHtml(user.name)} · ${roleLabel(user.role)}</option>`).join("")}</select></label><label class="form-field full"><span>转交原因</span><textarea name="note" required></textarea></label>${modalFooter("确认转交")}</form>`);
   }
   if (modal.action === ACTIONS.MATERIAL_READY) {
     return modalShell("确认素材就绪", "选择素材给予方式后进入剪辑环节", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.MATERIAL_READY}"/><label class="form-field full"><span>素材给予方式 <em>*</em></span><select name="materialMethod" required><option value="">请选择</option>${state.settings.materialDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>附件（可选）</span><input name="attachment" type="file"/><small class="field-help">可补充交接单或素材说明文件；演示环境支持 1MB 以内附件。</small></label><label class="form-field full"><span>备注（可选）</span><textarea name="note" placeholder="例如：素材已放入对应文件夹，缺少的镜头稍后补充"></textarea></label>${modalFooter("确认并推进")}</form>`);
@@ -665,8 +718,8 @@ function modalFooter(label, danger = false) {
   return `<div class="modal-footer full"><button type="button" class="secondary-button" data-action="close-modal">取消</button><button type="submit" class="${danger ? "danger-button" : "primary-button"}">${label}</button></div>`;
 }
 
-function modalShell(title, subtitle, content) {
-  return `<div class="modal-backdrop" data-action="close-modal"></div><section class="modal-card" role="dialog" aria-modal="true"><header><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(subtitle)}</p></div><button class="icon-button large" data-action="close-modal">${icon("x")}</button></header><div class="modal-content">${content}</div></section>`;
+function modalShell(title, subtitle, content, wide = false) {
+  return `<div class="modal-backdrop" data-action="close-modal"></div><section class="modal-card ${wide ? "modal-wide" : ""}" role="dialog" aria-modal="true"><header><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(subtitle)}</p></div><button class="icon-button large" data-action="close-modal">${icon("x")}</button></header><div class="modal-content">${content}</div></section>`;
 }
 
 function openAction(taskId, action) {
@@ -763,14 +816,53 @@ async function handleSubmit(event) {
     toast("基础选项已更新");
     return;
   }
+  if (event.target.id === "access-form") {
+    event.preventDefault();
+    if (currentUser(state).role !== "admin") return toast("只有管理员可以修改平台权限", "error");
+    const data = new FormData(event.target);
+    const existingUsers = configuredUsers();
+    const users = existingUsers.map((user, index) => {
+      const name = String(data.get(`memberName_${index}`) || "").trim();
+      const role = String(data.get(`memberRole_${index}`) || "director");
+      const permissions = data.getAll(`memberPermission_${index}`).map(String).filter((view) => view !== "admin" || role === "admin");
+      return { ...user, name, role, avatar: name.slice(0, 1) || user.avatar, enabled: data.get(`memberEnabled_${index}`) === "on", permissions: permissions.length ? permissions : ["todo"] };
+    });
+    if (users.some((user) => !user.name)) return toast("已配置身份的姓名不能为空", "error");
+    const newMemberName = String(data.get("newMemberName") || "").trim();
+    if (newMemberName) {
+      const role = String(data.get("newMemberRole") || "director");
+      const permissions = data.getAll("newMemberPermission").map(String).filter((view) => view !== "admin" || role === "admin");
+      users.push({ id: `manual_${Date.now().toString(36)}`, name: newMemberName, role, avatar: newMemberName.slice(0, 1), enabled: true, permissions: permissions.length ? permissions : ["todo"] });
+    }
+    const enabledUsers = users.filter((user) => user.enabled !== false);
+    if (!enabledUsers.length) return toast("至少保留一个启用身份", "error");
+    if (!enabledUsers.some((user) => user.role === "admin" && user.permissions.includes("admin"))) return toast("至少保留一位拥有管理后台权限的管理员", "error");
+    const nameById = Object.fromEntries(users.map((user) => [user.id, user.name]));
+    const tasks = state.tasks.map((task) => {
+      const next = { ...task };
+      [["directorId", "directorName"], ["editorId", "editorName"], ["reviewerId", "reviewerName"], ["shooterId", "shooterName"]].forEach(([idField, nameField]) => {
+        if (nameById[next[idField]]) next[nameField] = nameById[next[idField]];
+      });
+      return next;
+    });
+    let currentUserId = state.currentUserId;
+    if (!enabledUsers.some((user) => user.id === currentUserId)) currentUserId = enabledUsers.find((user) => user.role === "admin")?.id || enabledUsers[0].id;
+    const nextCurrentUser = users.find((user) => user.id === currentUserId) || enabledUsers[0];
+    const activeView = canAccessView(nextCurrentUser, state.activeView) ? state.activeView : firstAccessibleView(nextCurrentUser);
+    modal = null;
+    persist({ ...state, users, tasks, currentUserId, activeView, settings: { ...state.settings, identityMode: data.get("identityMode") === "feishu" ? "feishu" : "manual" } });
+    toast("平台权限与身份已更新");
+    return;
+  }
   if (event.target.id === "create-form") {
     event.preventDefault();
     const data = new FormData(event.target);
     try {
+      const reviewer = activeUsers().find((user) => user.role === "reviewer");
       const task = createTask({
         title: data.get("title"), account: data.get("account"), level: data.get("level"),
         publishAt: data.get("publishAt"), needsShoot: data.get("materialStatus") === "needs_shoot",
-        reviewerId: "u_reviewer_xu", reviewerName: "徐青"
+        reviewerId: reviewer?.id || null, reviewerName: reviewer?.name || ""
       }, currentUser(state), state.templates);
       modal = null;
       persist({ ...state, tasks: [task, ...state.tasks] });
@@ -791,7 +883,7 @@ async function handleSubmit(event) {
       try { payload.attachment = await readAttachment(attachment); }
       catch (error) { toast(error.message, "error"); return; }
     }
-    if (action === ACTIONS.TRANSFER) payload.user = USERS.find((user) => user.id === data.get("userId"));
+    if (action === ACTIONS.TRANSFER) payload.user = activeUsers().find((user) => user.id === data.get("userId"));
     if (action === ACTIONS.RESCHEDULE) payload.templates = state.templates;
     performAction(modal.taskId, action, payload);
   }
@@ -838,7 +930,17 @@ function handleClick(event) {
     return;
   }
   const view = event.target.closest("[data-view]")?.dataset.view;
-  if (view) { state.activeView = view; selectedTaskId = null; modal = null; persist(state); return; }
+  if (view) {
+    if (!canAccessView(currentUser(state), view)) {
+      toast("当前身份没有该页面的访问权限", "error");
+      return;
+    }
+    state.activeView = view;
+    selectedTaskId = null;
+    modal = null;
+    persist(state);
+    return;
+  }
   const actionEl = event.target.closest("[data-action]");
   if (actionEl) {
     const action = actionEl.dataset.action;
@@ -863,15 +965,21 @@ function handleClick(event) {
     if (action === "toggle-template") toggleTemplate(actionEl.dataset.level);
     if (action === "open-add-template") modal = { type: "template", level: null };
     if (action === "open-catalogs") modal = { type: "catalogs" };
+    if (action === "open-access-settings") modal = { type: "access" };
     if (action === "edit-template") modal = { type: "template", level: actionEl.dataset.level };
     if (action === "toggle-template-enabled") toggleTemplateEnabled(actionEl.dataset.level);
     render(); return;
   }
   const userId = event.target.closest("[data-user-id]")?.dataset.userId;
   if (userId) {
-    const user = USERS.find((item) => item.id === userId);
+    const user = activeUsers().find((item) => item.id === userId);
+    if (!user) {
+      toast("该身份已停用或不存在", "error");
+      return;
+    }
     modal = null;
-    persist({ ...state, currentUserId: userId, activeView: user?.role === "admin" ? state.activeView : (state.activeView === "admin" ? "todo" : state.activeView) });
+    const activeView = canAccessView(user, state.activeView) ? state.activeView : firstAccessibleView(user);
+    persist({ ...state, currentUserId: userId, activeView });
     return;
   }
   const taskAction = event.target.closest("[data-task-action]");

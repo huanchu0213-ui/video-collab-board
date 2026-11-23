@@ -6,6 +6,12 @@ const STORAGE_KEY = "video-collab-board:v1";
 const DEFAULT_ACCOUNTS = ["万万", "丝丝", "周周", "西西", "女团集合号"];
 const DEFAULT_MATERIAL_METHODS = ["飞书", "现场传输", "剪映云空间"];
 const DEFAULT_CUT_METHODS = ["剪映云空间", "飞书", "现场传输"];
+const VALID_ROLES = ["director", "editor", "reviewer", "admin"];
+const VALID_VIEWS = ["todo", "board", "admin"];
+
+function defaultPermissions(role) {
+  return role === "admin" ? [...VALID_VIEWS] : ["todo", "board"];
+}
 
 export const USERS = [
   { id: "u_director_zhou", name: "周周编导", role: "director", avatar: "周" },
@@ -14,7 +20,22 @@ export const USERS = [
   { id: "u_editor_chen", name: "陈川", role: "editor", avatar: "陈" },
   { id: "u_reviewer_xu", name: "徐青", role: "reviewer", avatar: "徐" },
   { id: "u_admin", name: "储焕", role: "admin", avatar: "储" }
-];
+].map((user) => ({ ...user, enabled: true, permissions: defaultPermissions(user.role) }));
+
+function normalizeUser(user, index) {
+  const role = VALID_ROLES.includes(user?.role) ? user.role : "director";
+  const permissions = Array.isArray(user?.permissions)
+    ? [...new Set(user.permissions)].filter((view) => VALID_VIEWS.includes(view) && (view !== "admin" || role === "admin"))
+    : defaultPermissions(role);
+  return {
+    id: String(user?.id || `manual_user_${index + 1}`),
+    name: String(user?.name || `成员${index + 1}`).trim(),
+    role,
+    avatar: String(user?.avatar || user?.name || "成").trim().slice(0, 1),
+    enabled: user?.enabled !== false,
+    permissions: permissions.length ? permissions : ["todo"]
+  };
+}
 
 const templateIntervals = {
   S: [48, 72, 24, 24, 24],
@@ -135,12 +156,13 @@ export function defaultState() {
     tasks: seedTasks(),
     templates: makeTemplates(),
     reminders: [],
+    users: USERS.map((user) => ({ ...user, permissions: [...user.permissions] })),
     settings: {
       enabled: false,
       groupId: "oc_video_collab_demo",
       groupName: "剪辑中台协作群",
       editorLeadId: "u_admin",
-      identityMode: "demo",
+      identityMode: "manual",
       accounts: [...DEFAULT_ACCOUNTS],
       materialDeliveryMethods: [...DEFAULT_MATERIAL_METHODS],
       cutDeliveryMethods: [...DEFAULT_CUT_METHODS]
@@ -152,9 +174,11 @@ function normalizeState(parsed) {
   const defaults = defaultState();
   return {
     ...parsed,
+    users: (Array.isArray(parsed.users) && parsed.users.length ? parsed.users : defaults.users).map(normalizeUser),
     settings: {
       ...defaults.settings,
       ...(parsed.settings || {}),
+      identityMode: parsed.settings?.identityMode === "feishu" ? "feishu" : "manual",
       accounts: Array.isArray(parsed.settings?.accounts) && parsed.settings.accounts.length
         ? parsed.settings.accounts
         : defaults.settings.accounts,
@@ -204,7 +228,10 @@ export function resetState() {
 }
 
 export function currentUser(state) {
-  return USERS.find((user) => user.id === state.currentUserId) || USERS[0];
+  const users = Array.isArray(state?.users) && state.users.length ? state.users : USERS;
+  return users.find((user) => user.id === state.currentUserId && user.enabled !== false)
+    || users.find((user) => user.enabled !== false)
+    || USERS[0];
 }
 
 export function stageLabel(stage) {
