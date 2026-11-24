@@ -690,12 +690,10 @@ function renderActionModal() {
   if (!task) return "";
   if (modal.action === "open-review") {
     const version = task.versions.at(-1);
-    const reviewChoice = modal.reviewChoice;
     const delivery = version?.url
       ? `<a href="${escapeHtml(version.url)}" target="_blank" rel="noopener">打开成片 ${icon("link")}</a>`
       : `<p class="review-delivery">交片渠道：${escapeHtml(version?.deliveryMethod || "未记录")}${version?.deliveryNote ? ` · ${escapeHtml(version.deliveryNote)}` : ""}</p>`;
-    const reviewForm = reviewChoice ? `<form id="action-form" class="review-inline-form"><input type="hidden" name="action" value="${reviewChoice}"/><label class="form-field"><span>${reviewChoice === ACTIONS.APPROVE ? "审核备注（可选）" : "修改备注（可选）"}</span><textarea name="note" placeholder="${reviewChoice === ACTIONS.APPROVE ? "可补充通过说明" : "可补充需要修改的内容"}"></textarea></label>${modalFooter(reviewChoice === ACTIONS.APPROVE ? "确认通过" : "确认退回", reviewChoice === ACTIONS.REJECT)}</form>` : "";
-    return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "选择审核结果后，可在当前窗口补充备注", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><div class="review-actions"><button class="approve-button ${reviewChoice === ACTIONS.APPROVE ? "selected" : ""}" aria-pressed="${reviewChoice === ACTIONS.APPROVE}" data-review-action="${ACTIONS.APPROVE}" data-task-id="${task.id}">✓ 通过审核</button><button class="reject-button ${reviewChoice === ACTIONS.REJECT ? "selected" : ""}" aria-pressed="${reviewChoice === ACTIONS.REJECT}" data-review-action="${ACTIONS.REJECT}" data-task-id="${task.id}">↩ 退回修改</button></div>${reviewForm}`);
+    return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "备注可选，填写后直接选择审核结果", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><form id="review-form" class="review-inline-form"><label class="form-field"><span>审核备注（可选）</span><textarea name="note" placeholder="可补充通过说明或需要修改的内容"></textarea></label><div class="review-actions"><button type="submit" class="approve-button" name="reviewAction" value="${ACTIONS.APPROVE}">✓ 通过审核</button><button type="submit" class="reject-button" name="reviewAction" value="${ACTIONS.REJECT}">↩ 退回修改</button></div></form>`);
   }
   if (modal.action === "more") {
     return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions"><button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button><button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
@@ -768,6 +766,14 @@ async function performAction(taskId, action, payload) {
 }
 
 async function handleSubmit(event) {
+  if (event.target.id === "review-form") {
+    event.preventDefault();
+    const action = event.submitter?.value;
+    if (![ACTIONS.APPROVE, ACTIONS.REJECT].includes(action)) return toast("请选择审核结果", "error");
+    const data = new FormData(event.target);
+    performAction(modal.taskId, action, { note: data.get("note") });
+    return;
+  }
   if (event.target.id === "template-form") {
     event.preventDefault();
     const data = new FormData(event.target);
@@ -991,12 +997,6 @@ function handleClick(event) {
   const reviewAction = event.target.closest("[data-review-action]");
   if (reviewAction) {
     const choice = reviewAction.dataset.reviewAction;
-    if (modal?.type === "action" && modal.action === "open-review" && [ACTIONS.APPROVE, ACTIONS.REJECT].includes(choice)) {
-      modal = { ...modal, reviewChoice: choice };
-      render();
-      requestAnimationFrame(() => document.querySelector(".review-inline-form textarea")?.focus());
-      return;
-    }
     modal = { type: "action", taskId: reviewAction.dataset.taskId, action: choice };
     render();
     return;
