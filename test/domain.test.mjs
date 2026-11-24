@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ACTIONS, STAGES, applyAction, buildDeadlines, createTask,
-  evaluateReminders, migrateLegacyTask, validateTemplate
+  evaluateReminders, migrateLegacyTask, taskIsRelatedToUser, validateTemplate
 } from "../dist/domain.js";
 
 const director = { id: "director", name: "编导", role: "director" };
@@ -77,6 +77,24 @@ test("角色权限阻止非剪辑认领和非负责人审核", () => {
   reviewTask = applyAction(reviewTask, ACTIONS.MATERIAL_READY, director, { materialMethod: "现场传输" }, now);
   reviewTask = applyAction(reviewTask, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "飞书" }, now);
   assert.throws(() => applyAction(reviewTask, ACTIONS.APPROVE, reviewer, {}, now), /只有当前审核负责人/);
+});
+
+test("全部相关任务按角色区分创建、认领与全量范围", () => {
+  const created = createTask({ title: "归属测试", account: "万万", level: "B", publishAt, needsShoot: false }, director, templates, now);
+  assert.equal(taskIsRelatedToUser(created, director), true);
+  assert.equal(taskIsRelatedToUser(created, editor), false);
+  assert.equal(taskIsRelatedToUser(created, reviewer), true);
+  assert.equal(taskIsRelatedToUser(created, { id: "admin", role: "admin" }), true);
+
+  const claimed = applyAction(created, ACTIONS.CLAIM, editor, {}, now);
+  assert.equal(taskIsRelatedToUser(claimed, editor), true);
+  const transferred = { ...claimed, editorId: "editor_2", editorName: "新剪辑" };
+  assert.equal(taskIsRelatedToUser(transferred, editor), true);
+  assert.equal(taskIsRelatedToUser(transferred, { id: "editor_2", role: "editor" }), true);
+
+  const transferredDirector = { ...created, directorId: "director_2", directorName: "新编导" };
+  assert.equal(taskIsRelatedToUser(transferredDirector, director), true);
+  assert.equal(taskIsRelatedToUser(transferredDirector, { id: "director_2", role: "director" }), false);
 });
 
 test("S/A 成片必须经过中台初审，再进入编导终审", () => {

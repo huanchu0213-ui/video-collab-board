@@ -8,7 +8,7 @@ const [domainModule, storeModule, adapterModule] = await Promise.all([
 const {
   ACTIONS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
   applyAction, canAct, createTask, deadlineForCurrentStage, evaluateReminders,
-  getResponsible, taskBucket, validateTemplate
+  getResponsible, taskIsRelatedToUser, validateTemplate
 } = domainModule;
 const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
 const { createIdentityAdapter, createReminderAdapter } = adapterModule;
@@ -195,13 +195,6 @@ function myActionableTasks() {
   return state.tasks.filter((task) => canAct(task, user) && ![STAGES.PUBLISHED, STAGES.CANCELLED].includes(task.currentStage));
 }
 
-function taskBelongsToUser(task, user) {
-  if (user.role === "admin") return true;
-  if (user.role === "editor") return task.editorId === user.id || task.currentStage === STAGES.WAITING_CLAIM;
-  if (user.role === "reviewer") return task.reviewerId === user.id;
-  return task.directorId === user.id || task.shooterId === user.id;
-}
-
 function shanghaiDateKey(value) {
   if (!value) return "";
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -235,7 +228,7 @@ const TODO_DATE_PRESETS = [
 function availableTodoYears() {
   const user = currentUser(state);
   const years = state.tasks
-    .filter((task) => taskBelongsToUser(task, user) && !task.archived && task.currentStage !== STAGES.CANCELLED)
+    .filter((task) => taskIsRelatedToUser(task, user))
     .map((task) => Number(shanghaiDateKey(task.publishAt).slice(0, 4)))
     .filter(Number.isFinite);
   const uniqueYears = [...new Set(years)].sort((left, right) => left - right);
@@ -357,54 +350,66 @@ function riskBanner() {
 
 function renderTodo() {
   const user = currentUser(state);
-  const buckets = { overdue: [], today: [], upcoming: [], waiting: [] };
-  const ownedTasks = state.tasks.filter((task) => taskBelongsToUser(task, user));
-  const visibleTasks = ownedTasks.filter((task) => {
+  const nonOperationalStages = [STAGES.PUBLISHED, STAGES.CANCELLED, STAGES.PAUSED];
+  const activeTasks = state.tasks.filter((task) => !nonOperationalStages.includes(task.currentStage));
+  const actionableTasks = activeTasks.filter((task) => canAct(task, user));
+  const overdueTasks = actionableTasks
+    .filter(isOverdue)
+    .sort((left, right) => new Date(deadlineForCurrentStage(left)) - new Date(deadlineForCurrentStage(right)));
+  const pendingTasks = actionableTasks
+    .filter((task) => !isOverdue(task))
+    .sort((left, right) => new Date(deadlineForCurrentStage(left)) - new Date(deadlineForCurrentStage(right)));
+  const allRelatedTasks = state.tasks
+    .filter((task) => taskIsRelatedToUser(task, user))
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
+  const waitingTasks = allRelatedTasks
+    .filter((task) => !nonOperationalStages.includes(task.currentStage) && !canAct(task, user))
+    .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
+  const filteredRelatedTasks = allRelatedTasks.filter((task) => {
     if (!matchesTodoDate(task, todoFilters)) return false;
     if (todoFilters.status !== "all") return task.currentStage === todoFilters.status;
-    return !task.archived && task.currentStage !== STAGES.CANCELLED;
-  });
-  visibleTasks.forEach((task) => {
-    const bucket = taskBucket(task, user);
-    if (buckets[bucket]) buckets[bucket].push(task);
+    return true;
   });
   const counts = {
-    overdue: buckets.overdue.length,
-    today: buckets.today.length,
-    unclaimed: visibleTasks.filter((task) => task.currentStage === STAGES.WAITING_CLAIM).length,
-    soon: visibleTasks.filter((task) => {
-      const diff = new Date(task.publishAt).getTime() - Date.now();
-      return diff > 0 && diff < 48 * 3600000 && task.currentStage !== STAGES.PUBLISHED;
-    }).length
+    overdue: overdueTasks.length,
+    pending: pendingTasks.length,
+    waiting: waitingTasks.length,
+    published: allRelatedTasks.filter((task) => task.currentStage === STAGES.PUBLISHED).length
   };
+  const relatedDescription = user.role === "director"
+    ? "我创建的全部任务，包含已发布、暂停和取消"
+    : user.role === "editor"
+      ? "我认领过的全部任务，转交后仍保留记录"
+      : "全部任务，包含已发布、暂停和取消";
   const greeting = new Date().getHours() < 12 ? "早上好" : new Date().getHours() < 18 ? "下午好" : "晚上好";
   return renderShell(`
     ${riskBanner()}
     <section class="hero-panel">
-      <div><span class="eyebrow">${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span><h2>${greeting}，${escapeHtml(user.name)}。</h2><p>你有 <strong>${counts.overdue + counts.today}</strong> 条片子需要优先处理，先把超期风险清掉。</p></div>
-      <div class="hero-orbit"><span>${counts.overdue + counts.today}</span><small>待推进</small></div>
+      <div><span class="eyebrow">${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span><h2>${greeting}，${escapeHtml(user.name)}。</h2><p>你有 <strong>${counts.overdue + counts.pending}</strong> 条片子需要推进，优先处理超期任务。</p></div>
+      <div class="hero-orbit"><span>${counts.overdue + counts.pending}</span><small>待推进</small></div>
     </section>
     <section class="metric-grid">
       ${metricCard("超期任务", counts.overdue, "需要立即处理", "danger")}
-      ${metricCard("今日处理", counts.today, "截止到今天", "amber")}
-      ${metricCard("等待认领", counts.unclaimed, "剪辑池待响应", "blue")}
-      ${metricCard("48h 内发布", counts.soon, "留意审核缓冲", "mint")}
+      ${metricCard("待处理", counts.pending, "当前由你推进", "amber")}
+      ${metricCard("等待他人", counts.waiting, "当前无需操作", "blue")}
+      ${metricCard("已发布", counts.published, "全部相关任务", "mint")}
     </section>
-    <section class="filter-bar todo-filter-bar" aria-label="我的待办筛选">
-      ${renderTodoDateFilter()}
-      <select id="todo-status-filter">
-        <option value="all">全部状态</option>
-        ${Object.entries(STAGE_META).map(([stage, meta]) => `<option value="${stage}" ${todoFilters.status === stage ? "selected" : ""}>${meta.label}</option>`).join("")}
-      </select>
-      <span class="result-count">归属于我的 ${visibleTasks.length} 条</span>
+    <section class="todo-grid operational-grid">
+      ${todoSection("超期", "当前由你处理，且已越过节点截止时间", overdueTasks, "danger")}
+      ${todoSection("待处理", "当前由你处理，且尚未超期", pendingTasks, "amber")}
+      ${todoSection("等待他人", "相关任务正在由其他负责人推进", waitingTasks, "muted")}
     </section>
-    <section class="todo-grid ${todoFilters.status === "all" ? "" : "single"}">
-      ${todoFilters.status === "all" ? `
-        ${todoSection("超期", "已经越过当前节点截止时间", buckets.overdue, "danger")}
-        ${todoSection("今日处理", "今天需要完成的动作", buckets.today, "amber")}
-        ${todoSection("即将开始", "已排期且由你负责", buckets.upcoming, "blue")}
-        ${todoSection("等待他人", "关注即可，暂时无需操作", buckets.waiting.slice(0, 6), "muted")}
-      ` : todoSection("筛选结果", `当前状态：${stageLabel(todoFilters.status)}`, visibleTasks, "blue")}
+    <section class="related-task-area">
+      <header class="related-task-heading"><div><span class="section-dot blue"></span><h3>全部相关任务</h3><em>${allRelatedTasks.length}</em></div><p>${relatedDescription}</p></header>
+      <section class="filter-bar todo-filter-bar" aria-label="全部相关任务筛选">
+        ${renderTodoDateFilter()}
+        <select id="todo-status-filter">
+          <option value="all">全部状态</option>
+          ${Object.entries(STAGE_META).map(([stage, meta]) => `<option value="${stage}" ${todoFilters.status === stage ? "selected" : ""}>${meta.label}</option>`).join("")}
+        </select>
+        <span class="result-count">筛选后 ${filteredRelatedTasks.length} / 共 ${allRelatedTasks.length} 条</span>
+      </section>
+      <div class="related-task-stack">${filteredRelatedTasks.length ? filteredRelatedTasks.map((task) => renderTaskCard(task, true)).join("") : `<div class="empty-state"><span>✓</span><p>当前筛选条件下没有相关任务</p></div>`}</div>
     </section>
   `);
 }
@@ -440,6 +445,12 @@ function renderTaskCard(task, wide = false) {
   const overdue = isOverdue(task);
   const action = primaryAction(task);
   const actionable = canAct(task, currentUser(state));
+  let deadlineCopy;
+  if (task.currentStage === STAGES.PUBLISHED) deadlineCopy = `已发布 · ${formatDate(task.completedAt || task.publishAt)}`;
+  else if (task.currentStage === STAGES.CANCELLED) deadlineCopy = `已取消 · ${formatDate(task.updatedAt || task.publishAt)}`;
+  else if (task.currentStage === STAGES.PAUSED) deadlineCopy = "已暂停，当前不发送提醒";
+  else if (overdue) deadlineCopy = relativeTime(deadline);
+  else deadlineCopy = `${formatDate(deadline)} · ${relativeTime(deadline)}`;
   return `<article class="task-card ${wide ? "wide" : ""} ${overdue ? "overdue" : ""}" data-task-id="${task.id}" tabindex="0">
     <div class="task-card-top">${levelBadge(task.level)}<span class="account">${escapeHtml(task.account)}</span><span class="task-code">${escapeHtml(task.code)}</span></div>
     <h4>${escapeHtml(task.title)}</h4>
@@ -448,7 +459,7 @@ function renderTaskCard(task, wide = false) {
       <span class="owner-mini"><i>${escapeHtml((responsible.name || "待").slice(0, 1))}</i>${escapeHtml(responsible.name || "待指定")}</span>
     </div>
     <div class="task-card-bottom">
-      <span class="deadline ${overdue ? "is-overdue" : ""}">${icon("clock")} ${overdue ? relativeTime(deadline) : `${formatDate(deadline)} · ${relativeTime(deadline)}`}</span>
+      <span class="deadline ${overdue ? "is-overdue" : ""}">${icon("clock")} ${deadlineCopy}</span>
       ${actionable && action ? `<button class="quick-button" data-task-action="${action[0]}" data-task-id="${task.id}">${action[1]}</button>` : `<button class="ghost-arrow" data-open-task="${task.id}" title="查看详情">详情</button>`}
     </div>
   </article>`;

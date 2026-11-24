@@ -382,6 +382,20 @@ export function getResponsible(task) {
   return { id: task.directorId, name: task.directorName, kind: "user" };
 }
 
+export function taskIsRelatedToUser(task, user) {
+  if (!task || !user) return false;
+  if (["reviewer", "admin"].includes(user.role)) return true;
+  const events = Array.isArray(task.events) ? task.events : [];
+  if (user.role === "editor") {
+    return task.editorId === user.id || events.some((event) => event.action === ACTIONS.CLAIM && event.actorId === user.id);
+  }
+  if (user.role === "director") {
+    const createEvents = events.filter((event) => event.action === ACTIONS.CREATE);
+    return createEvents.length ? createEvents.some((event) => event.actorId === user.id) : task.directorId === user.id;
+  }
+  return false;
+}
+
 export function canAct(task, user) {
   if (!user || task.readOnly || task.archived) return false;
   if (user.role === "admin") return true;
