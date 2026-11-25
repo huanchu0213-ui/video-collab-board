@@ -421,7 +421,8 @@ function metricCard(label, value, hint, tone) {
 function todoSection(title, subtitle, tasks, tone) {
   return `<section class="todo-section">
     <header><div><span class="section-dot ${tone}"></span><h3>${title}</h3><em>${tasks.length}</em></div><p>${subtitle}</p></header>
-    <div class="task-stack">${tasks.length ? tasks.map((task) => renderTaskCard(task, true)).join("") : `<div class="empty-state"><span>✓</span><p>这里暂时没有任务</p></div>`}</div>
+    <div class="task-stack" ${tasks.length > 2 ? `tabindex="0" aria-label="${title}任务列表，共${tasks.length}条，可在区域内滚动"` : ""}>${tasks.length ? tasks.map((task) => renderTaskCard(task, true)).join("") : `<div class="empty-state"><span>✓</span><p>这里暂时没有任务</p></div>`}</div>
+    ${tasks.length > 2 ? `<p class="todo-section-footer">区域内滚动查看全部 ${tasks.length} 条</p>` : ""}
   </section>`;
 }
 
