@@ -5,6 +5,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check dist/domain.js && node --check dist/store.js && node --check dist/adapters.js && node --check dist/app.js"
+    "check": "node --check dist/domain.js && node --check dist/store.js && node --check dist/adapters.js && node --check dist/schedule.js && node --check dist/app.js"
   }
 }

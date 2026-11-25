@@ -1,9 +1,10 @@
 const assetVersion = new URL(import.meta.url).searchParams.get("v");
 const assetSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : "";
-const [domainModule, storeModule, adapterModule] = await Promise.all([
+const [domainModule, storeModule, adapterModule, scheduleModule] = await Promise.all([
   import(`./domain.js${assetSuffix}`),
   import(`./store.js${assetSuffix}`),
-  import(`./adapters.js${assetSuffix}`)
+  import(`./adapters.js${assetSuffix}`),
+  import(`./schedule.js${assetSuffix}`)
 ]);
 const {
   ACTIONS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
@@ -12,6 +13,7 @@ const {
 } = domainModule;
 const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
 const { createIdentityAdapter, createReminderAdapter } = adapterModule;
+const { chinaDateKey, mondayOf, shiftDate, weekSlices } = scheduleModule;
 
 let state = loadState();
 if (!canAccessView(currentUser(state), state.activeView)) state.activeView = firstAccessibleView(currentUser(state));
@@ -21,6 +23,7 @@ let datePickerOpen = false;
 let calendarMonth = "";
 let selectedTaskId = null;
 let modal = null;
+let scheduleMonday = mondayOf(chinaDateKey(new Date()));
 
 const app = document.querySelector("#app");
 const toastRoot = document.querySelector("#toast-root");
@@ -130,6 +133,7 @@ function canAccessView(user, view) {
   const permissions = Array.isArray(user.permissions)
     ? user.permissions
     : user.role === "admin" ? ["todo", "board", "admin"] : ["todo", "board"];
+  if (view === "schedule") return permissions.includes("board");
   return permissions.includes(view) && (view !== "admin" || user.role === "admin");
 }
 
@@ -138,7 +142,7 @@ function firstAccessibleView(user) {
 }
 
 function pageTitle() {
-  return ({ todo: ["我的待办", "把今天需要推进的片子处理掉"], board: ["团队看板", "一眼看清每条片子卡在哪里"], admin: ["管理后台", "配置排期模板、角色与提醒策略"] })[state.activeView];
+  return ({ todo: ["我的待办", "把今天需要推进的片子处理掉"], board: ["团队看板", "一眼看清每条片子卡在哪里"], schedule: ["日期汇总", "按自然周查看团队排期与交付"], admin: ["管理后台", "配置排期模板、角色与提醒策略"] })[state.activeView];
 }
 
 function renderShell(content) {
@@ -156,6 +160,7 @@ function renderShell(content) {
         <nav class="nav-list" aria-label="主导航">
           ${canAccessView(user, "todo") ? navButton("todo", "我的待办", "todo") : ""}
           ${canAccessView(user, "board") ? navButton("board", "团队看板", "board") : ""}
+          ${canAccessView(user, "schedule") ? navButton("schedule", "日期汇总", "calendar") : ""}
           ${canAccessView(user, "admin") ? navButton("admin", "管理后台", "settings") : ""}
         </nav>
         <div class="sidebar-note">
@@ -175,6 +180,7 @@ function renderShell(content) {
           <div class="top-actions">
             <button class="mobile-identity-button" ${manualIdentity ? 'data-action="switch-user"' : "disabled"} title="${manualIdentity ? "切换手动身份" : "身份由飞书 SSO 自动识别"}" aria-label="${manualIdentity ? "切换手动身份" : "飞书 SSO 身份"}，当前为${escapeHtml(user.name)}"><span>${escapeHtml(user.avatar || user.name.slice(0, 1))}</span><small>${manualIdentity ? "切换身份" : "SSO 身份"}</small></button>
             <div class="sync-pill"><span></span> 本地已同步</div>
+            <button class="activity-trigger" data-action="open-activity" title="查看团队操作记录"><span class="activity-full">操作记录</span><span class="activity-short">记录</span></button>
             ${["director", "admin"].includes(user.role) ? `<button class="primary-button" data-action="open-create">${icon("plus")} 新建视频</button>` : ""}
           </div>
         </header>
@@ -406,6 +412,7 @@ function renderTodo() {
       ${metricCard("等待他人", counts.waiting, "当前无需操作", "blue")}
       ${metricCard("已发布", counts.published, "全部相关任务", "mint")}
     </section>
+    ${user.role === "editor" ? renderClaimPool() : ""}
     <section class="todo-grid operational-grid">
       ${todoSection("超期", "当前由你处理，且已越过节点截止时间", overdueTasks, "danger")}
       ${todoSection("待处理", "当前由你处理，且尚未超期", pendingTasks, "amber")}
@@ -424,6 +431,15 @@ function renderTodo() {
       <div class="related-task-stack">${filteredRelatedTasks.length ? filteredRelatedTasks.map((task) => renderTaskCard(task, true)).join("") : `<div class="empty-state"><span>✓</span><p>当前筛选条件下没有相关任务</p></div>`}</div>
     </section>
   `);
+}
+
+function renderClaimPool() {
+  const tasks = state.tasks.filter((task) => task.currentStage === STAGES.WAITING_CLAIM && !task.readOnly)
+    .sort((left, right) => new Date(deadlineForCurrentStage(left)) - new Date(deadlineForCurrentStage(right)));
+  return `<section class="claim-pool" aria-label="剪辑认领池">
+    <header><div><span class="eyebrow">CLAIM POOL</span><h3>剪辑认领池 <em>${tasks.length}</em></h3><p>按认领截止时间排序，认领后由你承接这条片子</p></div></header>
+    <div class="claim-pool-list" ${tasks.length > 4 ? 'tabindex="0" aria-label="待认领任务列表"' : ""}>${tasks.length ? tasks.map((task) => `<article class="claim-pool-item"><div class="claim-pool-title">${levelBadge(task.level)}<strong>${escapeHtml(task.title)}</strong></div><p>${escapeHtml(task.account)} · 编导 ${escapeHtml(task.directorName || "待指定")} · 发布 ${formatDate(task.publishAt, false)}</p><span class="${isOverdue(task) ? "is-overdue" : ""}">认领截止 ${formatDate(deadlineForCurrentStage(task))}</span><button class="quick-button" data-task-action="${ACTIONS.CLAIM}" data-task-id="${task.id}">认领</button></article>`).join("") : `<div class="empty-inline">目前没有待认领任务</div>`}</div>
+  </section>`;
 }
 
 function metricCard(label, value, hint, tone) {
@@ -520,6 +536,29 @@ function filteredTasks() {
   });
 }
 
+function weekLabel(start, end) {
+  const [startYear, startMonth, startDay] = start.split("-");
+  const [endYear, endMonth, endDay] = end.split("-");
+  return `${startYear}年${Number(startMonth)}月${Number(startDay)}日—${startYear === endYear ? "" : `${endYear}年`}${Number(endMonth)}月${Number(endDay)}日`;
+}
+
+function renderWeekGroup(title, tasks, hint) {
+  return `<div class="week-group"><div class="week-group-heading"><strong>${title}</strong><em>${tasks.length}</em></div>${tasks.length
+    ? `<div class="week-task-list">${tasks.map((task) => `<button type="button" class="week-task" data-open-task="${task.id}"><span>${levelBadge(task.level)}<strong>${escapeHtml(task.title)}</strong></span><small>${escapeHtml(task.account)} · ${escapeHtml(task.editorName || task.directorName || "待认领")}</small></button>`).join("")}</div>`
+    : `<p class="week-empty">${hint}</p>`}</div>`;
+}
+
+function renderSchedule() {
+  const slices = weekSlices(state.tasks, scheduleMonday);
+  const lastEnd = slices.at(-1).end;
+  const todayMonday = mondayOf(chinaDateKey(new Date()));
+  return renderShell(`
+    <section class="schedule-intro"><div><span class="eyebrow">WEEKLY OVERVIEW</span><h2>每个自然周一片排期</h2><p>周一至周日汇总计划拍摄、成片交付、待认领和发布；点击任务可查看详情。</p></div><div class="schedule-range">${weekLabel(scheduleMonday, lastEnd)}</div></section>
+    <div class="schedule-controls"><button class="secondary-button" data-action="schedule-prev">上一组四周</button><button class="secondary-button" data-action="schedule-today" ${scheduleMonday === todayMonday ? "disabled" : ""}>回到本周</button><button class="secondary-button" data-action="schedule-next">下一组四周</button><label>跳转到日期 <input id="schedule-jump" type="date" value="${scheduleMonday}" aria-label="跳转到所在自然周" /></label></div>
+    <div class="week-slices">${slices.map((week) => `<section class="week-slice ${week.start === todayMonday ? "current" : ""}" aria-label="${weekLabel(week.start, week.end)}排期"><header><div><span>${week.start === todayMonday ? "本周" : "自然周"}</span><h3>${weekLabel(week.start, week.end)}</h3></div><strong>${week.plannedPublish.length} 条计划发布</strong></header><div class="week-counts"><span>拍摄 <b>${week.shooting.length}</b></span><span>交付 <b>${week.delivered.length}</b></span><span>待认领 <b>${week.unclaimed.length}</b></span><span>计划发布 <b>${week.plannedPublish.length}</b></span><span>已发布 <b>${week.published.length}</b></span></div><div class="week-groups">${renderWeekGroup("计划拍摄", week.shooting, "本周暂无拍摄排期")}${renderWeekGroup("已交付成片", week.delivered, "本周暂无交付")}${renderWeekGroup("仍待认领", week.unclaimed, "本周暂无待认领")}${renderWeekGroup("计划发布", week.plannedPublish, "本周暂无发布排期")}${renderWeekGroup("已发布", week.published, "本周暂无已发布作品")}</div></section>`).join("")}</div>
+  `);
+}
+
 function renderAdmin() {
   const enabledTemplates = activeTemplates();
   const confirmedCount = enabledTemplates.filter((item) => item.confirmed && validateTemplate(item).valid).length;
@@ -599,15 +638,16 @@ function renderFiles(task) {
     const meta = [task.materialMethod, attachmentNames.length ? `附件：${attachmentNames.join("、")}` : "", task.materialNote].filter(Boolean).join(" · ");
     materialRows.push(`<div class="file-row material-row"><span>RAW</span><div><strong>素材给予方式</strong><small>${escapeHtml(meta)}</small></div></div>`);
   }
-  for (const attachment of task.materialAttachments || []) {
-    if (attachment.dataUrl) materialRows.push(`<a class="file-row" href="${escapeHtml(attachment.dataUrl)}" download="${escapeHtml(attachment.name)}"><span>ATT</span><div><strong>${escapeHtml(attachment.name)}</strong><small>${attachment.size ? `${Math.max(1, Math.round(attachment.size / 1024))} KB` : "素材附件"}</small></div>${icon("link")}</a>`);
+  for (const [index, attachment] of (task.materialAttachments || []).entries()) {
+    if (attachment.dataUrl) materialRows.push(`<div class="file-row"><span>ATT</span><div><strong>${escapeHtml(attachment.name)}</strong><small>${attachment.size ? `${Math.max(1, Math.round(attachment.size / 1024))} KB` : "素材附件"}</small></div><button type="button" class="file-preview-button" data-preview-task="${task.id}" data-preview-kind="material" data-preview-index="${index}">预览</button></div>`);
   }
-  const cutRows = task.versions.filter((version) => !version.url).map((version) => {
+  const cutRows = task.versions.map((version, index) => {
+    if (version.url && !version.attachment?.dataUrl) return "";
     const meta = [version.deliveryMethod, version.deliveryNote, `${version.submittedBy} · ${formatDate(version.submittedAt)}`].filter(Boolean).join(" · ");
-    return `<div class="file-row cut-row"><span>V${version.number}</span><div><strong>成片 V${version.number}</strong><small>${escapeHtml(meta)}</small></div></div>`;
+    return `<div class="file-row cut-row"><span>V${version.number}</span><div><strong>成片 V${version.number}${version.attachment ? ` · ${escapeHtml(version.attachment.name)}` : ""}</strong><small>${escapeHtml(meta)}</small></div>${version.attachment?.dataUrl ? `<button type="button" class="file-preview-button" data-preview-task="${task.id}" data-preview-kind="version" data-preview-index="${index}">预览附件</button>` : ""}</div>`;
   });
   const linkedRows = linkedFiles.map((file) => `<a class="file-row" href="${escapeHtml(file.url)}" target="_blank" rel="noopener"><span>${file.type}</span><div><strong>${escapeHtml(file.label)}</strong><small>${escapeHtml(file.meta || "点击打开链接")}</small></div>${icon("link")}</a>`);
-  return [...materialRows, ...cutRows, ...linkedRows].join("") || `<div class="empty-inline">尚未添加交付文件</div>`;
+  return [...materialRows, ...cutRows, ...linkedRows].filter(Boolean).join("") || `<div class="empty-inline">尚未添加交付文件</div>`;
 }
 
 function renderEvent(event) {
@@ -621,7 +661,29 @@ function renderModal() {
   if (modal.type === "template") return renderTemplateModal();
   if (modal.type === "catalogs") return renderCatalogModal();
   if (modal.type === "access") return renderAccessModal();
+  if (modal.type === "activity") return renderActivityModal();
+  if (modal.type === "preview") return renderPreviewModal();
   return "";
+}
+
+function renderActivityModal() {
+  const events = state.tasks.flatMap((task) => (task.events || []).map((event) => ({ ...event, taskTitle: task.title, taskCode: task.code, taskId: task.id })))
+    .sort((left, right) => new Date(right.at) - new Date(left.at)).slice(0, 100);
+  return modalShell("团队操作记录", "按操作时间倒序展示最近 100 条记录", `<div class="activity-list">${events.length ? events.map((event) => `<button type="button" class="activity-row" data-activity-task="${event.taskId}"><span class="activity-mark">${escapeHtml((event.actorName || "系").slice(0, 1))}</span><span><strong>${escapeHtml(event.actorName || "系统")} · ${escapeHtml(event.label || event.action)}</strong><small>${escapeHtml(event.taskTitle)} · ${escapeHtml(event.taskCode || "")}</small>${event.note ? `<em>${escapeHtml(event.note)}</em>` : ""}</span><time>${formatDate(event.at)}</time></button>`).join("") : `<div class="empty-inline">暂无操作记录</div>`}</div>`, true);
+}
+
+function renderPreviewModal() {
+  const task = state.tasks.find((item) => item.id === modal.taskId);
+  const attachment = modal.kind === "version" ? task?.versions?.[modal.index]?.attachment : task?.materialAttachments?.[modal.index];
+  if (!attachment) return "";
+  const source = attachment.dataUrl || "";
+  const type = attachment.type || source.match(/^data:([^;]+)/)?.[1] || "";
+  const safeData = /^data:(image\/(png|jpeg|webp|gif)|application\/pdf|video\/(mp4|webm));base64,/i.test(source);
+  let preview = `<div class="preview-unsupported">此文件类型暂无在线预览，可下载后查看。</div>`;
+  if (safeData && type.startsWith("image/")) preview = `<img src="${escapeHtml(source)}" alt="${escapeHtml(attachment.name)}" />`;
+  else if (safeData && type.startsWith("video/")) preview = `<video src="${escapeHtml(source)}" controls playsinline></video>`;
+  else if (safeData && type === "application/pdf") preview = `<iframe src="${escapeHtml(source)}" title="${escapeHtml(attachment.name)}" sandbox></iframe>`;
+  return modalShell("附件预览", `${task.title} · ${attachment.name}`, `<div class="preview-content">${preview}</div><div class="preview-footer"><span>${attachment.size ? `${Math.max(1, Math.round(attachment.size / 1024))} KB` : "附件"}</span>${/^data:/.test(source) ? `<a class="secondary-button" href="${escapeHtml(source)}" download="${escapeHtml(attachment.name)}">下载附件</a>` : ""}</div>`, true);
 }
 
 function renderCreateModal() {
@@ -740,7 +802,7 @@ function renderActionModal() {
   }
   if (modal.action === ACTIONS.SUBMIT_CUT) {
     const spec = actionSpec(task, modal.action);
-    return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.SUBMIT_CUT}"/><label class="form-field full"><span>交片渠道 <em>*</em></span><select name="cutDeliveryMethod" required><option value="">请选择</option>${state.settings.cutDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>交片位置 / 备注（可选）</span><textarea name="deliveryNote" placeholder="例如：剪映云空间项目名称、飞书文件夹位置或现场接收人"></textarea></label><label class="form-field full"><span>${spec.note}</span><textarea name="note" placeholder="${spec.note}"></textarea></label>${modalFooter(spec.submit)}</form>`);
+    return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.SUBMIT_CUT}"/><label class="form-field full"><span>交片渠道 <em>*</em></span><select name="cutDeliveryMethod" required><option value="">请选择</option>${state.settings.cutDeliveryMethods.map((method) => `<option value="${escapeHtml(method)}">${escapeHtml(method)}</option>`).join("")}</select></label><label class="form-field full"><span>交片位置 / 备注（可选）</span><textarea name="deliveryNote" placeholder="例如：剪映云空间项目名称、飞书文件夹位置或现场接收人"></textarea></label><label class="form-field full"><span>小附件（可选）</span><input name="attachment" type="file"/><small class="field-help">支持预览图片、PDF 和小视频；演示环境限 1MB。</small></label><label class="form-field full"><span>${spec.note}</span><textarea name="note" placeholder="${spec.note}"></textarea></label>${modalFooter(spec.submit)}</form>`);
   }
   const spec = actionSpec(task, modal.action);
   return modalShell(spec.title, spec.desc, `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${modal.action}"/>${spec.url ? `<label class="form-field full"><span>${spec.url}</span><input name="url" type="url" ${modal.action === ACTIONS.PUBLISH ? "" : "required"} placeholder="https://"/></label>` : ""}${spec.note ? `<label class="form-field full"><span>${spec.note}</span><textarea name="note" ${[ACTIONS.PAUSE, ACTIONS.CANCEL].includes(modal.action) ? "required" : ""} placeholder="${spec.note}"></textarea></label>` : ""}${modalFooter(spec.submit, spec.danger)}</form>`);
@@ -940,6 +1002,19 @@ async function scanReminders() {
 }
 
 function handleClick(event) {
+  const previewButton = event.target.closest("[data-preview-task]");
+  if (previewButton) {
+    modal = { type: "preview", taskId: previewButton.dataset.previewTask, kind: previewButton.dataset.previewKind, index: Number(previewButton.dataset.previewIndex) };
+    render();
+    return;
+  }
+  const activityTaskId = event.target.closest("[data-activity-task]")?.dataset.activityTask;
+  if (activityTaskId) {
+    modal = null;
+    selectedTaskId = activityTaskId;
+    render();
+    return;
+  }
   const dateInput = event.target.closest('input[type="date"]');
   if (dateInput) {
     dateInput.focus();
@@ -988,6 +1063,10 @@ function handleClick(event) {
   if (actionEl) {
     const action = actionEl.dataset.action;
     if (action === "open-create") modal = { type: "create" };
+    if (action === "open-activity") modal = { type: "activity" };
+    if (action === "schedule-prev") scheduleMonday = shiftDate(scheduleMonday, -28);
+    if (action === "schedule-next") scheduleMonday = shiftDate(scheduleMonday, 28);
+    if (action === "schedule-today") scheduleMonday = mondayOf(chinaDateKey(new Date()));
     if (action === "toggle-date-filter") {
       datePickerOpen = !datePickerOpen;
       if (datePickerOpen) {
@@ -1064,6 +1143,11 @@ function toggleTemplateEnabled(level) {
 }
 
 function handleChange(event) {
+  if (event.target.id === "schedule-jump" && event.target.value) {
+    scheduleMonday = mondayOf(event.target.value);
+    render();
+    return;
+  }
   if (event.target.id === "calendar-year-select") {
     ensureCalendarMonth();
     calendarMonth = `${event.target.value}-${calendarMonth.slice(5, 7)}`;
@@ -1103,7 +1187,7 @@ function handleInput(event) {
 }
 
 function render() {
-  const content = state.activeView === "board" ? renderBoard() : state.activeView === "admin" ? renderAdmin() : renderTodo();
+  const content = state.activeView === "board" ? renderBoard() : state.activeView === "schedule" ? renderSchedule() : state.activeView === "admin" ? renderAdmin() : renderTodo();
   app.innerHTML = content;
 }
 

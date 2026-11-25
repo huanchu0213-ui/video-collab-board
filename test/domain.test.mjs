@@ -141,6 +141,16 @@ test("提交成片必须选择交片渠道", () => {
   assert.throws(() => applyAction(task, ACTIONS.SUBMIT_CUT, editor, {}, now), /请选择交片渠道/);
 });
 
+test("成片附件随版本保存，后续修改不会覆盖旧附件", () => {
+  let task = createTask({ title: "附件版本", account: "万万", level: "B", publishAt, needsShoot: false }, director, templates, now);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  task = applyAction(task, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "飞书", attachment: { name: "第一版.png", type: "image/png", size: 10, dataUrl: "data:image/png;base64,AA==" } }, now);
+  task = applyAction(task, ACTIONS.REJECT, director, {}, now);
+  task = applyAction(task, ACTIONS.SUBMIT_CUT, editor, { cutDeliveryMethod: "飞书", attachment: { name: "第二版.pdf", type: "application/pdf", size: 12, dataUrl: "data:application/pdf;base64,AA==" } }, now);
+  assert.deepEqual(task.versions.map((version) => version.attachment.name), ["第一版.png", "第二版.pdf"]);
+});
+
 test("暂停任务停止提醒，恢复后回到原环节", () => {
   let task = createTask({ title: "暂停测试", account: "万万", level: "A", publishAt, needsShoot: false, reviewerId: reviewer.id, reviewerName: reviewer.name }, director, templates, now);
   task = applyAction(task, ACTIONS.PAUSE, director, { note: "等待商务确认" }, now);

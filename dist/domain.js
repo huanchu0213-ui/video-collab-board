@@ -245,13 +245,7 @@ function authorizeAction(task, action, actor) {
 
 function completeMaterialHandoff(task, action, actor, payload, now) {
   if (!payload.materialMethod?.trim()) throw new Error("请选择素材给予方式");
-  const attachment = payload.attachment?.name ? {
-    name: payload.attachment.name,
-    size: Number(payload.attachment.size) || 0,
-    type: payload.attachment.type || "",
-    lastModified: Number(payload.attachment.lastModified) || null,
-    dataUrl: /^data:/.test(payload.attachment.dataUrl || "") ? payload.attachment.dataUrl : ""
-  } : null;
+  const attachment = normalizeAttachment(payload.attachment);
   const note = payload.note?.trim() || "";
   const next = move(task, STAGES.EDITING, actor, action, now, {
     note,
@@ -262,6 +256,16 @@ function completeMaterialHandoff(task, action, actor, payload, now) {
   next.materialNote = note;
   next.materialAttachments = attachment ? [...(task.materialAttachments || []), attachment] : [...(task.materialAttachments || [])];
   return next;
+}
+
+function normalizeAttachment(input) {
+  return input?.name ? {
+    name: input.name,
+    size: Number(input.size) || 0,
+    type: input.type || "",
+    lastModified: Number(input.lastModified) || null,
+    dataUrl: /^data:/.test(input.dataUrl || "") ? input.dataUrl : ""
+  } : null;
 }
 
 export function applyAction(task, action, actor, payload = {}, now = new Date()) {
@@ -292,6 +296,7 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
         url: payload.url || "",
         deliveryMethod: payload.cutDeliveryMethod.trim(),
         deliveryNote: payload.deliveryNote?.trim() || "",
+        attachment: normalizeAttachment(payload.attachment),
         note: payload.note || "",
         submittedBy: actor.name,
         submittedAt: new Date(now).toISOString()
