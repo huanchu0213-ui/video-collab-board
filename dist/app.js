@@ -208,7 +208,7 @@ function matchesTodoDate(task, { date: value, start, end }) {
   if (value === "all") return true;
   const today = shanghaiDateKey(new Date());
   const taskDate = shanghaiDateKey(task.publishAt);
-  if (value === "custom") return Boolean(start) && taskDate >= start && taskDate <= (end || start);
+  if (value === "custom") return !start || !end || (taskDate >= start && taskDate <= end);
   if (value === "today") return taskDate === today;
   if (value === "overdue") return taskDate < today;
   const days = value === "next3" ? 3 : 7;
@@ -941,6 +941,7 @@ function handleClick(event) {
     } else {
       const [start, end] = [todoFilters.start, calendarDate].sort();
       todoFilters = { ...todoFilters, start, end };
+      datePickerOpen = false;
     }
     render();
     return;
