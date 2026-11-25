@@ -113,6 +113,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .related-task-stack > .empty-state { grid-column: 1 / -1; }
 
 .filter-bar { padding: 12px; border: 1px solid var(--line); border-radius: 15px; background: #fff; display: flex; gap: 8px; align-items: center; }
+.board-filter-bar { display: grid; gap: 10px; }
+.board-filter-main, .board-filter-options { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.board-filter-main .date-filter-control { flex: 0 0 208px; }
+.board-filter-main .search-box { min-width: 0; }
+.board-filter-options { flex-wrap: wrap; }
+.board-filter-options .result-count { margin-left: auto; }
 .search-box { min-width: 270px; flex: 1; height: 37px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; display: flex; align-items: center; gap: 8px; color: #8c958f; }.search-box input { width: 100%; border: 0; outline: 0; color: var(--ink); font-size: 11px; }.search-box .icon { width: 15px; }
 .filter-bar select { height: 37px; padding: 0 28px 0 11px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #606a64; font-size: 11px; }.result-count { padding: 0 6px; color: #8b948e; font-size: 10px; white-space: nowrap; }
 .date-filter-control { position: relative; flex: 0 0 auto; }
@@ -137,10 +143,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .calendar-heading button:hover { background: #f6e9df; }
 .calendar-heading button:disabled { opacity: .35; background: transparent; cursor: not-allowed; }
 .calendar-month-selects { min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px; }
-.todo-filter-bar .calendar-month-selects select { flex: 0 0 auto; min-width: 0; height: 32px; padding: 0 23px 0 8px; border: 1px solid #e1d0c2; border-radius: 7px; color: #4e4137; background-color: #fffdfa; background-position: calc(100% - 12px) 13px, calc(100% - 8px) 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
-.todo-filter-bar .calendar-month-selects select:first-child { width: 88px; }
-.todo-filter-bar .calendar-month-selects select:last-child { width: 64px; }
-.todo-filter-bar .calendar-month-selects select:focus { border-color: #b78c6c; outline: 3px solid #f6e8de; }
+.date-filter-popover .calendar-month-selects select { flex: 0 0 auto; min-width: 0; height: 32px; padding: 0 23px 0 8px; border: 1px solid #e1d0c2; border-radius: 7px; color: #4e4137; background-color: #fffdfa; background-position: calc(100% - 12px) 13px, calc(100% - 8px) 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.date-filter-popover .calendar-month-selects select:first-child { width: 88px; }
+.date-filter-popover .calendar-month-selects select:last-child { width: 64px; }
+.date-filter-popover .calendar-month-selects select:focus { border-color: #b78c6c; outline: 3px solid #f6e8de; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .calendar-weekdays { margin-top: 8px; color: #9a897b; text-align: center; font-size: 11px; }
 .calendar-weekdays span { padding: 6px 0; }
@@ -493,6 +499,9 @@ body {
   .filter-bar { flex-wrap: wrap; }.search-box { min-width: 100%; }.filter-bar select { flex: 1; min-width: 30%; }.result-count { width: 100%; text-align: right; }.kanban { grid-auto-columns: 84vw; }.kanban-column { min-height: 60vh; }
   .related-task-heading { display: block; }.related-task-heading p { margin-top: 6px; text-align: left; }.related-task-stack { grid-template-columns: 1fr; padding-left: 12px; padding-right: 12px; }.related-task-area .todo-filter-bar { margin-left: 12px; margin-right: 12px; }
   .todo-filter-bar .date-filter-control { flex-basis: 100%; width: 100%; }
+  .board-filter-main { flex-wrap: wrap; }
+  .board-filter-main .date-filter-control, .board-filter-main .search-box { flex: 1 1 100%; width: 100%; }
+  .board-filter-main .date-filter-trigger { width: 100%; }
   .date-filter-popover { width: 100%; }
   .admin-intro { padding: 19px; display: block; }.admin-intro h2 { font-size: 18px; }.readiness { margin-top: 15px; }.admin-side { grid-template-columns: 1fr; }.offset-grid { grid-template-columns: repeat(2, 1fr); }.panel-header { align-items: flex-start; gap: 10px; }.template-card > header { flex-wrap: wrap; }.template-actions { width: 100%; margin-left: 43px; }
   .drawer-status { margin: 14px 16px 0; grid-template-columns: 1fr; gap: 10px; }.drawer-status div { padding: 0 0 10px; border-right: 0; border-bottom: 1px solid #dce3de; }.drawer-status div:last-child { padding: 0; }.drawer-header, .drawer-section { padding-left: 17px; padding-right: 17px; }.drawer-header h2 { font-size: 18px; }.progress-track { padding-left: 16px; padding-right: 16px; }.progress-step { min-width: 65px; }.drawer-actions { padding: 11px 15px; }

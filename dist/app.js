@@ -15,7 +15,7 @@ const { createIdentityAdapter, createReminderAdapter } = adapterModule;
 
 let state = loadState();
 if (!canAccessView(currentUser(state), state.activeView)) state.activeView = firstAccessibleView(currentUser(state));
-let filters = { query: "", level: "all", owner: "all", risk: "all" };
+let filters = { query: "", level: "all", owner: "all", risk: "all", date: "all", start: "", end: "" };
 let todoFilters = { date: "all", status: "all", start: "", end: "" };
 let datePickerOpen = false;
 let calendarMonth = "";
@@ -204,7 +204,7 @@ function shanghaiDateKey(value) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
-function matchesTodoDate(task, { date: value, start, end }) {
+function matchesPublishDate(task, { date: value, start, end }) {
   if (value === "all") return true;
   const today = shanghaiDateKey(new Date());
   const taskDate = shanghaiDateKey(task.publishAt);
@@ -225,10 +225,19 @@ const TODO_DATE_PRESETS = [
   ["overdue", "已过计划发布日期"]
 ];
 
-function availableTodoYears() {
+function activeDateFilters() {
+  return state.activeView === "board" ? filters : todoFilters;
+}
+
+function updateDateFilters(patch) {
+  if (state.activeView === "board") filters = { ...filters, ...patch };
+  else todoFilters = { ...todoFilters, ...patch };
+}
+
+function availableDateYears() {
   const user = currentUser(state);
   const years = state.tasks
-    .filter((task) => taskIsRelatedToUser(task, user))
+    .filter((task) => state.activeView === "board" || taskIsRelatedToUser(task, user))
     .map((task) => Number(shanghaiDateKey(task.publishAt).slice(0, 4)))
     .filter(Number.isFinite);
   const uniqueYears = [...new Set(years)].sort((left, right) => left - right);
@@ -236,9 +245,9 @@ function availableTodoYears() {
 }
 
 function ensureCalendarMonth() {
-  const preferred = calendarMonth || (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+  const preferred = calendarMonth || (activeDateFilters().start || shanghaiDateKey(new Date())).slice(0, 7);
   const [preferredYear, preferredMonth] = preferred.split("-").map(Number);
-  const years = availableTodoYears();
+  const years = availableDateYears();
   const year = years.includes(preferredYear)
     ? preferredYear
     : years.reduce((closest, candidate) => Math.abs(candidate - preferredYear) < Math.abs(closest - preferredYear) ? candidate : closest);
@@ -247,7 +256,7 @@ function ensureCalendarMonth() {
 
 function shiftCalendarMonth(offset) {
   ensureCalendarMonth();
-  const years = availableTodoYears();
+  const years = availableDateYears();
   let [year, month] = calendarMonth.split("-").map(Number);
   if (offset > 0 && month === 12) {
     const nextYear = years.find((candidate) => candidate > year);
@@ -271,17 +280,19 @@ function compactDateLabel(dateKey) {
   return `${Number(month)}月${Number(day)}日`;
 }
 
-function todoDateLabel() {
-  if (todoFilters.date !== "custom") return TODO_DATE_PRESETS.find(([value]) => value === todoFilters.date)?.[1] || "全部发布日期";
-  if (!todoFilters.start) return "选择日期区间";
-  if (!todoFilters.end) return `${compactDateLabel(todoFilters.start)}·选择结束日`;
-  return `${compactDateLabel(todoFilters.start)} – ${compactDateLabel(todoFilters.end)}`;
+function dateFilterLabel() {
+  const { date, start, end } = activeDateFilters();
+  if (date !== "custom") return TODO_DATE_PRESETS.find(([value]) => value === date)?.[1] || "全部发布日期";
+  if (!start) return "选择日期区间";
+  if (!end) return `${compactDateLabel(start)}·选择结束日`;
+  return `${compactDateLabel(start)} – ${compactDateLabel(end)}`;
 }
 
 function renderDateCalendar() {
   ensureCalendarMonth();
   const [year, month] = calendarMonth.split("-").map(Number);
-  const availableYears = availableTodoYears();
+  const availableYears = availableDateYears();
+  const { start, end } = activeDateFilters();
   const yearOptions = availableYears
     .map((optionYear) => `<option value="${optionYear}" ${optionYear === year ? "selected" : ""}>${optionYear}年</option>`)
     .join("");
@@ -298,9 +309,9 @@ function renderDateCalendar() {
     ...Array.from({ length: daysInMonth }, (_, index) => {
       const day = index + 1;
       const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const isStart = dateKey === todoFilters.start;
-      const isEnd = dateKey === todoFilters.end;
-      const inRange = Boolean(todoFilters.start && todoFilters.end && dateKey > todoFilters.start && dateKey < todoFilters.end);
+      const isStart = dateKey === start;
+      const isEnd = dateKey === end;
+      const inRange = Boolean(start && end && dateKey > start && dateKey < end);
       const classes = [isStart ? "range-start" : "", isEnd ? "range-end" : "", inRange ? "in-range" : "", dateKey === today ? "is-today" : ""].filter(Boolean).join(" ");
       return `<button type="button" class="calendar-day ${classes}" data-calendar-date="${dateKey}" aria-label="${year}年${month}月${day}日" aria-pressed="${isStart || isEnd}">${day}</button>`;
     })
@@ -319,21 +330,22 @@ function renderDateCalendar() {
   `;
 }
 
-function renderTodoDateFilter() {
-  const selectionHint = todoFilters.date === "custom" && todoFilters.start && !todoFilters.end
-    ? `已选 ${compactDateLabel(todoFilters.start)}，请选择结束日期`
-    : todoFilters.date === "custom" && todoFilters.start && todoFilters.end
-      ? `已选 ${compactDateLabel(todoFilters.start)} 至 ${compactDateLabel(todoFilters.end)}`
+function renderDateFilter() {
+  const { date, start, end } = activeDateFilters();
+  const selectionHint = date === "custom" && start && !end
+    ? `已选 ${compactDateLabel(start)}，请选择结束日期`
+    : date === "custom" && start && end
+      ? `已选 ${compactDateLabel(start)} 至 ${compactDateLabel(end)}`
       : "点击第一个日期作为起点";
   return `
     <div class="date-filter-control">
-      <button type="button" id="todo-date-filter" class="date-filter-trigger ${todoFilters.date === "custom" ? "has-range" : ""}" data-action="toggle-date-filter" aria-haspopup="dialog" aria-expanded="${datePickerOpen}">
-        ${icon("calendar")}<span>${escapeHtml(todoDateLabel())}</span><i aria-hidden="true">⌄</i>
+      <button type="button" id="${state.activeView === "board" ? "board-date-filter" : "todo-date-filter"}" class="date-filter-trigger ${date === "custom" ? "has-range" : ""}" data-action="toggle-date-filter" aria-haspopup="dialog" aria-expanded="${datePickerOpen}">
+        ${icon("calendar")}<span>${escapeHtml(dateFilterLabel())}</span><i aria-hidden="true">⌄</i>
       </button>
       ${datePickerOpen ? `<div class="date-filter-popover" role="dialog" aria-label="选择发布日期区间">
         <div class="date-filter-head"><div><strong>发布日期</strong><span>${selectionHint}</span></div><button type="button" data-action="clear-date-filter">清除</button></div>
         <div class="date-preset-list" aria-label="快捷日期筛选">
-          ${TODO_DATE_PRESETS.map(([value, label]) => `<button type="button" class="${todoFilters.date === value ? "active" : ""}" data-date-preset="${value}">${label}</button>`).join("")}
+          ${TODO_DATE_PRESETS.map(([value, label]) => `<button type="button" class="${date === value ? "active" : ""}" data-date-preset="${value}">${label}</button>`).join("")}
         </div>
         <div class="date-calendar">${renderDateCalendar()}</div>
         <div class="date-filter-footer"><span>首尾日期深色，区间日期浅色</span><button type="button" data-action="close-date-filter">完成</button></div>
@@ -366,7 +378,7 @@ function renderTodo() {
     .filter((task) => !nonOperationalStages.includes(task.currentStage) && !canAct(task, user))
     .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
   const filteredRelatedTasks = allRelatedTasks.filter((task) => {
-    if (!matchesTodoDate(task, todoFilters)) return false;
+    if (!matchesPublishDate(task, todoFilters)) return false;
     if (todoFilters.status !== "all") return task.currentStage === todoFilters.status;
     return true;
   });
@@ -402,7 +414,7 @@ function renderTodo() {
     <section class="related-task-area">
       <header class="related-task-heading"><div><span class="section-dot blue"></span><h3>全部相关任务</h3><em>${allRelatedTasks.length}</em></div><p>${relatedDescription}</p></header>
       <section class="filter-bar todo-filter-bar" aria-label="全部相关任务筛选">
-        ${renderTodoDateFilter()}
+        ${renderDateFilter()}
         <select id="todo-status-filter">
           <option value="all">全部状态</option>
           ${Object.entries(STAGE_META).map(([stage, meta]) => `<option value="${stage}" ${todoFilters.status === stage ? "selected" : ""}>${meta.label}</option>`).join("")}
@@ -471,12 +483,17 @@ function renderBoard() {
   const visible = filteredTasks();
   return renderShell(`
     ${riskBanner()}
-    <section class="filter-bar">
-      <label class="search-box">${icon("search")}<input id="board-search" value="${escapeHtml(filters.query)}" placeholder="搜索选题、账号或任务编号" /></label>
-      <select id="filter-level"><option value="all">全部等级</option>${state.templates.map((template) => `<option value="${escapeHtml(template.level)}" ${filters.level === template.level ? "selected" : ""}>${escapeHtml(template.name)}${template.enabled === false ? "（已停用）" : ""}</option>`).join("")}</select>
-      <select id="filter-owner"><option value="all">全部负责人</option>${activeUsers().map((user) => `<option value="${user.id}" ${filters.owner === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("")}</select>
-      <select id="filter-risk"><option value="all">全部状态</option><option value="overdue" ${filters.risk === "overdue" ? "selected" : ""}>仅看超期</option><option value="soon" ${filters.risk === "soon" ? "selected" : ""}>48h内发布</option></select>
-      <span class="result-count">${visible.length} 条任务</span>
+    <section class="filter-bar board-filter-bar" aria-label="团队看板筛选">
+      <div class="board-filter-main">
+        ${renderDateFilter()}
+        <label class="search-box">${icon("search")}<input id="board-search" value="${escapeHtml(filters.query)}" placeholder="搜索选题、账号或任务编号" /></label>
+      </div>
+      <div class="board-filter-options">
+        <select id="filter-level"><option value="all">全部等级</option>${state.templates.map((template) => `<option value="${escapeHtml(template.level)}" ${filters.level === template.level ? "selected" : ""}>${escapeHtml(template.name)}${template.enabled === false ? "（已停用）" : ""}</option>`).join("")}</select>
+        <select id="filter-owner"><option value="all">全部负责人</option>${activeUsers().map((user) => `<option value="${user.id}" ${filters.owner === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("")}</select>
+        <select id="filter-risk"><option value="all">全部状态</option><option value="overdue" ${filters.risk === "overdue" ? "selected" : ""}>仅看超期</option><option value="soon" ${filters.risk === "soon" ? "selected" : ""}>48h内发布</option></select>
+        <span class="result-count">${visible.length} 条任务</span>
+      </div>
     </section>
     <section class="kanban" aria-label="团队视频任务看板">
       ${stages.map((stage) => {
@@ -489,6 +506,7 @@ function renderBoard() {
 
 function filteredTasks() {
   return state.tasks.filter((task) => {
+    if (!matchesPublishDate(task, filters)) return false;
     const text = `${task.title} ${task.account} ${task.code}`.toLowerCase();
     if (filters.query && !text.includes(filters.query.toLowerCase())) return false;
     if (filters.level !== "all" && task.level !== filters.level) return false;
@@ -929,18 +947,19 @@ function handleClick(event) {
   }
   const datePreset = event.target.closest("[data-date-preset]")?.dataset.datePreset;
   if (datePreset) {
-    todoFilters = { ...todoFilters, date: datePreset, start: "", end: "" };
+    updateDateFilters({ date: datePreset, start: "", end: "" });
     datePickerOpen = false;
     render();
     return;
   }
   const calendarDate = event.target.closest("[data-calendar-date]")?.dataset.calendarDate;
   if (calendarDate) {
-    if (todoFilters.date !== "custom" || !todoFilters.start || todoFilters.end) {
-      todoFilters = { ...todoFilters, date: "custom", start: calendarDate, end: "" };
+    const { date, start, end } = activeDateFilters();
+    if (date !== "custom" || !start || end) {
+      updateDateFilters({ date: "custom", start: calendarDate, end: "" });
     } else {
-      const [start, end] = [todoFilters.start, calendarDate].sort();
-      todoFilters = { ...todoFilters, start, end };
+      const [first, last] = [start, calendarDate].sort();
+      updateDateFilters({ start: first, end: last });
       datePickerOpen = false;
     }
     render();
@@ -959,6 +978,7 @@ function handleClick(event) {
       return;
     }
     state.activeView = view;
+    datePickerOpen = false;
     selectedTaskId = null;
     modal = null;
     persist(state);
@@ -971,13 +991,13 @@ function handleClick(event) {
     if (action === "toggle-date-filter") {
       datePickerOpen = !datePickerOpen;
       if (datePickerOpen) {
-        calendarMonth = (todoFilters.start || shanghaiDateKey(new Date())).slice(0, 7);
+        calendarMonth = (activeDateFilters().start || shanghaiDateKey(new Date())).slice(0, 7);
         ensureCalendarMonth();
       }
     }
     if (action === "close-date-filter") datePickerOpen = false;
     if (action === "clear-date-filter") {
-      todoFilters = { ...todoFilters, date: "all", start: "", end: "" };
+      updateDateFilters({ date: "all", start: "", end: "" });
       calendarMonth = shanghaiDateKey(new Date()).slice(0, 7);
     }
     if (action === "switch-user") modal = { type: "user" };
