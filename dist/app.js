@@ -13,7 +13,7 @@ const {
 } = domainModule;
 const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
 const { createIdentityAdapter, createReminderAdapter } = adapterModule;
-const { chinaDateKey, mondayOf, shiftDate, weekSlices } = scheduleModule;
+const { WEEK_GROUPS, chinaDateKey, mondayOf, shiftDate, weekSlices } = scheduleModule;
 
 let state = loadState();
 if (!canAccessView(currentUser(state), state.activeView)) state.activeView = firstAccessibleView(currentUser(state));
@@ -142,7 +142,7 @@ function firstAccessibleView(user) {
 }
 
 function pageTitle() {
-  return ({ todo: ["我的待办", "把今天需要推进的片子处理掉"], board: ["团队看板", "一眼看清每条片子卡在哪里"], schedule: ["日期汇总", "按自然周查看团队排期与交付"], admin: ["管理后台", "配置排期模板、角色与提醒策略"] })[state.activeView];
+  return ({ todo: ["我的待办", "把今天需要推进的片子处理掉"], board: ["团队看板", "一眼看清每条片子卡在哪里"], schedule: ["日期汇总", "按自然周查看任务当前进度"], admin: ["管理后台", "配置排期模板、角色与提醒策略"] })[state.activeView];
 }
 
 function renderShell(content) {
@@ -542,10 +542,8 @@ function weekLabel(start, end) {
   return `${startYear}年${Number(startMonth)}月${Number(startDay)}日—${startYear === endYear ? "" : `${endYear}年`}${Number(endMonth)}月${Number(endDay)}日`;
 }
 
-function renderWeekGroup(title, tasks, hint) {
-  return `<div class="week-group"><div class="week-group-heading"><strong>${title}</strong><em>${tasks.length}</em></div>${tasks.length
-    ? `<div class="week-task-list">${tasks.map((task) => `<button type="button" class="week-task" data-open-task="${task.id}"><span>${levelBadge(task.level)}<strong>${escapeHtml(task.title)}</strong></span><small>${escapeHtml(task.account)} · ${escapeHtml(task.editorName || task.directorName || "待认领")}</small></button>`).join("")}</div>`
-    : `<p class="week-empty">${hint}</p>`}</div>`;
+function renderWeekGroup(title, tasks) {
+  return `<div class="week-group"><div class="week-group-heading"><strong>${title}</strong><em>${tasks.length}</em></div><div class="week-task-list">${tasks.map((task) => `<button type="button" class="week-task" data-open-task="${task.id}"><span>${levelBadge(task.level)}<strong>${escapeHtml(task.title)}</strong></span><small>${escapeHtml(task.account)} · ${stageLabel(task.currentStage)} · 计划发布 ${formatDate(task.publishAt, false)}</small></button>`).join("")}</div></div>`;
 }
 
 function renderSchedule() {
@@ -553,9 +551,9 @@ function renderSchedule() {
   const lastEnd = slices.at(-1).end;
   const todayMonday = mondayOf(chinaDateKey(new Date()));
   return renderShell(`
-    <section class="schedule-intro"><div><span class="eyebrow">WEEKLY OVERVIEW</span><h2>每个自然周一片排期</h2><p>周一至周日汇总计划拍摄、成片交付、待认领和发布；点击任务可查看详情。</p></div><div class="schedule-range">${weekLabel(scheduleMonday, lastEnd)}</div></section>
+    <section class="schedule-intro"><div><span class="eyebrow">WEEKLY OVERVIEW</span><h2>按自然周查看发布排期</h2><p>每条任务按计划发布日期归入一个自然周，并根据当前环节只显示一次；点击任务可查看完整节点记录。</p></div><div class="schedule-range">${weekLabel(scheduleMonday, lastEnd)}</div></section>
     <div class="schedule-controls"><button class="secondary-button" data-action="schedule-prev">上一组四周</button><button class="secondary-button" data-action="schedule-today" ${scheduleMonday === todayMonday ? "disabled" : ""}>回到本周</button><button class="secondary-button" data-action="schedule-next">下一组四周</button><label>跳转到日期 <input id="schedule-jump" type="date" value="${scheduleMonday}" aria-label="跳转到所在自然周" /></label></div>
-    <div class="week-slices">${slices.map((week) => `<section class="week-slice ${week.start === todayMonday ? "current" : ""}" aria-label="${weekLabel(week.start, week.end)}排期"><header><div><span>${week.start === todayMonday ? "本周" : "自然周"}</span><h3>${weekLabel(week.start, week.end)}</h3></div><strong>${week.plannedPublish.length} 条计划发布</strong></header><div class="week-counts"><span>拍摄 <b>${week.shooting.length}</b></span><span>交付 <b>${week.delivered.length}</b></span><span>待认领 <b>${week.unclaimed.length}</b></span><span>计划发布 <b>${week.plannedPublish.length}</b></span><span>已发布 <b>${week.published.length}</b></span></div><div class="week-groups">${renderWeekGroup("计划拍摄", week.shooting, "本周暂无拍摄排期")}${renderWeekGroup("已交付成片", week.delivered, "本周暂无交付")}${renderWeekGroup("仍待认领", week.unclaimed, "本周暂无待认领")}${renderWeekGroup("计划发布", week.plannedPublish, "本周暂无发布排期")}${renderWeekGroup("已发布", week.published, "本周暂无已发布作品")}</div></section>`).join("")}</div>
+    <div class="week-slices">${slices.map((week) => `<section class="week-slice ${week.start === todayMonday ? "current" : ""}" aria-label="${weekLabel(week.start, week.end)}排期"><header><div><span>${week.start === todayMonday ? "本周" : "自然周"}</span><h3>${weekLabel(week.start, week.end)}</h3></div><strong>${week.tasks.length} 条任务</strong></header><div class="week-counts">${WEEK_GROUPS.map(({ key, label }) => `<span>${label} <b>${week.groups[key].length}</b></span>`).join("")}</div><div class="week-groups">${week.tasks.length ? WEEK_GROUPS.filter(({ key }) => week.groups[key].length).map(({ key, label }) => renderWeekGroup(label, week.groups[key])).join("") : `<div class="week-empty-state">这个自然周暂无任务</div>`}</div></section>`).join("")}</div>
   `);
 }
 

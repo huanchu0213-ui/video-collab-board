@@ -112,7 +112,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .week-task > span { display: flex; align-items: center; gap: 6px; }
 .week-task strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .week-task small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
-.week-empty { margin: 13px 0 1px; color: #9a8b7c; font-size: 11px; }
+.week-empty-state { grid-column: 1 / -1; padding: 24px; border: 1px dashed var(--line); border-radius: 10px; color: #9a8b7c; font-size: 12px; text-align: center; }
 
 .setup-banner { margin-bottom: 20px; padding: 14px 16px; border: 1px solid #f0d7a1; border-radius: 14px; background: #fff9e9; display: flex; gap: 12px; align-items: center; color: #755a20; }
 .setup-banner .icon { width: 21px; height: 21px; }.setup-banner div { flex: 1; }.setup-banner strong, .setup-banner span { display: block; }.setup-banner strong { font-size: 13px; }.setup-banner span { margin-top: 3px; color: #8d7442; font-size: 11px; }

@@ -1,4 +1,13 @@
-import { ACTIONS, STAGES } from "./domain.js";
+import { STAGES } from "./domain.js";
+
+export const WEEK_GROUPS = [
+  { key: "unclaimed", label: "待剪辑认领" },
+  { key: "materials", label: "待拍摄 / 素材" },
+  { key: "editing", label: "剪辑 / 修改中" },
+  { key: "reviewing", label: "审核 / 待发布" },
+  { key: "published", label: "已发布" },
+  { key: "stopped", label: "已暂停 / 取消" }
+];
 
 export function chinaDateKey(value) {
   if (!value) return "";
@@ -29,20 +38,26 @@ export function weekSlices(tasks, firstMonday, count = 4) {
   return Array.from({ length: count }, (_, index) => {
     const start = shiftDate(firstMonday, index * 7);
     const end = shiftDate(start, 6);
-    const inWeek = (value) => {
-      const key = chinaDateKey(value);
+    const assigned = tasks.filter((task) => {
+      const key = chinaDateKey(task.publishAt || task.completedAt || task.createdAt);
       return key && key >= start && key <= end;
-    };
-    const unique = (items) => [...new Map(items.map((task) => [task.id, task])).values()];
-    const byEvent = (action) => unique(tasks.filter((task) => (task.events || []).some((event) => event.action === action && inWeek(event.at))));
+    }).sort((left, right) => new Date(left.publishAt || left.completedAt || left.createdAt) - new Date(right.publishAt || right.completedAt || right.createdAt));
+    const groups = Object.fromEntries(WEEK_GROUPS.map(({ key }) => [key, []]));
+    for (const task of assigned) {
+      let key;
+      if (task.currentStage === STAGES.PUBLISHED) key = "published";
+      else if ([STAGES.PAUSED, STAGES.CANCELLED].includes(task.currentStage)) key = "stopped";
+      else if (task.currentStage === STAGES.WAITING_CLAIM) key = "unclaimed";
+      else if ([STAGES.WAITING_SHOOT, STAGES.WAITING_MATERIAL].includes(task.currentStage)) key = "materials";
+      else if ([STAGES.EDITING, STAGES.MODIFYING].includes(task.currentStage)) key = "editing";
+      else key = "reviewing";
+      groups[key].push(task);
+    }
     return {
       start,
       end,
-      shooting: tasks.filter((task) => task.needsShoot && inWeek(task.deadlines?.[STAGES.WAITING_SHOOT])),
-      delivered: unique([...byEvent(ACTIONS.SUBMIT_CUT), ...tasks.filter((task) => (task.versions || []).some((version) => inWeek(version.submittedAt)))]),
-      unclaimed: tasks.filter((task) => task.currentStage === STAGES.WAITING_CLAIM && inWeek(task.deadlines?.[STAGES.WAITING_CLAIM])),
-      plannedPublish: tasks.filter((task) => inWeek(task.publishAt)),
-      published: tasks.filter((task) => task.currentStage === STAGES.PUBLISHED && inWeek(task.completedAt || task.publishAt))
+      tasks: assigned,
+      groups
     };
   });
 }

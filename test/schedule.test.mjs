@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mondayOf, shiftDate, weekSlices } from "../dist/schedule.js";
+import { WEEK_GROUPS, mondayOf, shiftDate, weekSlices } from "../dist/schedule.js";
 import { ACTIONS, STAGES } from "../dist/domain.js";
 
 test("自然周从周一到周日，跨年仍按北京时间归周", () => {
@@ -9,7 +9,7 @@ test("自然周从周一到周日，跨年仍按北京时间归周", () => {
   assert.equal(shiftDate("2026-12-28", 6), "2027-01-03");
 });
 
-test("周切片按排期和实际事件分别统计，交付同一任务只计一次", () => {
+test("同周经历拍摄、交付和发布的任务只出现一次", () => {
   const task = {
     id: "one", needsShoot: true, currentStage: STAGES.PUBLISHED,
     deadlines: { [STAGES.WAITING_SHOOT]: "2026-11-22T17:00:00.000Z" },
@@ -18,9 +18,17 @@ test("周切片按排期和实际事件分别统计，交付同一任务只计�
     events: [{ action: ACTIONS.SUBMIT_CUT, at: "2026-11-25T08:00:00.000Z" }]
   };
   const [first, second] = weekSlices([task], "2026-11-23", 2);
-  assert.equal(first.shooting.length, 1);
-  assert.equal(first.delivered.length, 1);
-  assert.equal(first.plannedPublish.length, 1);
-  assert.equal(first.published.length, 0);
-  assert.equal(second.published.length, 1);
+  assert.equal(first.tasks.length, 1);
+  assert.deepEqual(first.groups.published.map((item) => item.id), ["one"]);
+  assert.equal(WEEK_GROUPS.reduce((total, { key }) => total + first.groups[key].length, 0), 1);
+  assert.equal(second.tasks.length, 0);
+});
+
+test("周内按当前环节互斥分组，含暂停与取消任务", () => {
+  const stages = [STAGES.WAITING_CLAIM, STAGES.WAITING_SHOOT, STAGES.EDITING, STAGES.INITIAL_REVIEW, STAGES.PUBLISHED, STAGES.PAUSED, STAGES.CANCELLED];
+  const tasks = stages.map((currentStage, index) => ({ id: `task_${index}`, currentStage, publishAt: "2026-11-25T15:59:00.000Z" }));
+  const [week] = weekSlices(tasks, "2026-11-23", 1);
+  assert.equal(week.tasks.length, tasks.length);
+  assert.deepEqual(WEEK_GROUPS.map(({ key }) => week.groups[key].length), [1, 1, 1, 1, 1, 2]);
+  assert.equal(new Set(WEEK_GROUPS.flatMap(({ key }) => week.groups[key].map((task) => task.id))).size, tasks.length);
 });
