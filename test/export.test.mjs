@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ACTIONS, STAGES, applyAction, createAssistanceTasks, createTask } from "../dist/domain.js";
+import { ACTIONS, STAGES, applyAction, createAssistanceTask, createTask } from "../dist/domain.js";
 import { EXPORT_COLUMNS, exportCsv, exportRows } from "../dist/export.js";
 
 const director = { id: "d", name: "编导", role: "director" };
@@ -13,7 +13,7 @@ test("按计划发布日期和协助服务日期筛选，导出每个节点的�
   let video = createTask({ title: "=风险选题", account: "万万", level: "B", publishAt: "2026-11-20", needsShoot: false }, director, template, createdAt);
   video = applyAction(video, ACTIONS.CLAIM, editor, {}, new Date("2026-11-19T02:00:00Z"));
   video = applyAction(video, ACTIONS.MATERIAL_READY, director, { materialMethod: "飞书" }, new Date("2026-11-19T05:00:00Z"));
-  const assist = createAssistanceTasks({ requestType: "acting", account: "万万", serviceDate: "2026-11-20", timeSlots: ["09:30-12:30"] }, director, createdAt)[0];
+  const assist = createAssistanceTask({ requestType: "acting", account: "万万", serviceDate: "2026-11-20", timeSlots: ["09:30-12:30"] }, director, createdAt);
   const rows = exportRows([video, assist], "2026-11-20", "2026-11-20");
   assert.ok(rows.every((row) => row.length === EXPORT_COLUMNS.length));
   assert.equal(new Set(rows.map((row) => row[1])).size, 2);

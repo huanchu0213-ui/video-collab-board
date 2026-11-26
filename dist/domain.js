@@ -220,38 +220,80 @@ export function createTask(input, actor, templates, now = new Date()) {
   return task;
 }
 
-export function createAssistanceTasks(input, actor, now = new Date()) {
+export function createAssistanceTask(input, actor, now = new Date()) {
   if (!actor || !["director", "admin"].includes(actor.role)) throw new Error("只有编导或管理员可以创建协助需求");
   if (!["shooting", "acting"].includes(input.requestType)) throw new Error("请选择拍摄协助或出镜协助");
   const account = String(input.account || "").trim();
   const serviceDate = String(input.serviceDate || "");
-  const slots = [...new Set(input.timeSlots || [])];
+  const slots = ASSISTANCE_SLOTS.filter((slot) => new Set(input.timeSlots || []).has(slot));
   if (!account) throw new Error("请选择账号 / 达人");
   const parsedDate = new Date(`${serviceDate}T12:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== serviceDate) throw new Error("请选择有效的协助日期");
-  if (!slots.length || slots.some((slot) => !ASSISTANCE_SLOTS.includes(slot))) throw new Error("请至少选择一个三小时时段");
+  if (!slots.length || (input.timeSlots || []).some((slot) => !ASSISTANCE_SLOTS.includes(slot))) throw new Error("请至少选择一个三小时时段");
   const title = String(input.title || "").trim() || `${account}${requestTypeLabel(input.requestType)}`;
-  return slots.map((slot) => {
-    const [startTime, endTime] = slot.split("-");
-    const startsAt = new Date(`${serviceDate}T${startTime}:00+08:00`).toISOString();
-    const endsAt = new Date(`${serviceDate}T${endTime}:00+08:00`).toISOString();
-    const id = makeId("assist");
-    const task = {
-      id, code: `AS-${serviceDate.replaceAll("-", "").slice(2)}-${id.slice(-5).toUpperCase()}`,
-      title, account, requestType: input.requestType, level: "", levelName: requestTypeLabel(input.requestType),
-      serviceDate, timeSlot: slot, startsAt, endsAt, publishAt: endsAt,
-      currentStage: STAGES.WAITING_CLAIM, previousStage: null,
-      directorId: actor.id, directorName: actor.name, editorId: null, editorName: null,
-      reviewerId: null, reviewerName: "", shooterId: null, shooterName: "",
-      requiresInitialReview: false, needsShoot: false, scriptUrl: "", materialUrl: "",
-      materialMethod: "", materialNote: "", materialAttachments: [], versions: [], scheduleIntervals: {},
-      deadlines: { [STAGES.WAITING_CLAIM]: startsAt, [STAGES.ASSISTING]: endsAt, [STAGES.ASSIST_DONE]: endsAt },
-      stageStartedAt: new Date(now).toISOString(), createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
-      completedAt: null, archived: false, readOnly: false, reminderEnabled: true, pauseReason: "", events: []
-    };
-    task.events.push(eventFor({ ...task, currentStage: null }, ACTIONS.CREATE_ASSIST, actor, now, { toStage: task.currentStage, metadata: { timeSlot: slot } }));
-    return task;
-  });
+  const startsAt = new Date(`${serviceDate}T${slots[0].split("-")[0]}:00+08:00`).toISOString();
+  const endsAt = new Date(`${serviceDate}T${slots.at(-1).split("-")[1]}:00+08:00`).toISOString();
+  const id = makeId("assist");
+  const task = {
+    id, code: `AS-${serviceDate.replaceAll("-", "").slice(2)}-${id.slice(-5).toUpperCase()}`,
+    title, account, requestType: input.requestType, level: "", levelName: requestTypeLabel(input.requestType),
+    serviceDate, timeSlots: slots, timeSlot: slots.join("、"), startsAt, endsAt, publishAt: endsAt,
+    currentStage: STAGES.WAITING_CLAIM, previousStage: null,
+    directorId: actor.id, directorName: actor.name, editorId: null, editorName: null,
+    reviewerId: null, reviewerName: "", shooterId: null, shooterName: "",
+    requiresInitialReview: false, needsShoot: false, scriptUrl: "", materialUrl: "",
+    materialMethod: "", materialNote: "", materialAttachments: [], versions: [], scheduleIntervals: {},
+    deadlines: { [STAGES.WAITING_CLAIM]: startsAt, [STAGES.ASSISTING]: endsAt, [STAGES.ASSIST_DONE]: endsAt },
+    stageStartedAt: new Date(now).toISOString(), createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
+    completedAt: null, archived: false, readOnly: false, reminderEnabled: true, pauseReason: "", events: []
+  };
+  task.events.push(eventFor({ ...task, currentStage: null }, ACTIONS.CREATE_ASSIST, actor, now, { toStage: task.currentStage, metadata: { timeSlots: slots } }));
+  return task;
+}
+
+export function assistanceSlots(task) {
+  return Array.isArray(task.timeSlots) && task.timeSlots.length ? task.timeSlots : task.timeSlot ? [task.timeSlot] : [];
+}
+
+export function consolidateLegacyAssistanceTasks(tasks) {
+  const groups = new Map();
+  for (const task of tasks) {
+    if (!["shooting", "acting"].includes(task.requestType) || !ASSISTANCE_SLOTS.includes(task.timeSlot)
+      || Array.isArray(task.timeSlots) || ![STAGES.WAITING_CLAIM, STAGES.ASSISTING].includes(task.currentStage)) continue;
+    const allowedEvents = (task.events || []).every((event) => [ACTIONS.CREATE_ASSIST, ACTIONS.CLAIM].includes(event.action));
+    if (!allowedEvents) continue;
+    const key = [task.requestType, task.account, task.serviceDate, task.directorId, task.title, task.createdAt].join("\u0000");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(task);
+  }
+  const replacements = new Map();
+  const removed = new Set();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    if (new Set(group.map((task) => task.timeSlot)).size !== group.length
+      || group.some((task) => !Number.isFinite(new Date(task.startsAt).getTime()) || !Number.isFinite(new Date(task.endsAt).getTime()))) continue;
+    const owners = new Set(group.map((task) => task.editorId).filter(Boolean));
+    if (owners.size > 1) continue;
+    const slots = ASSISTANCE_SLOTS.filter((slot) => group.some((task) => task.timeSlot === slot));
+    const master = group.find((task) => task.editorId) || group[0];
+    const startsAt = new Date(Math.min(...group.map((task) => new Date(task.startsAt).getTime()))).toISOString();
+    const endsAt = new Date(Math.max(...group.map((task) => new Date(task.endsAt).getTime()))).toISOString();
+    const events = group.flatMap((task) => (task.events || []).map((event) => ({
+      ...event, taskId: master.id, metadata: { ...event.metadata, sourceTaskId: task.id }
+    }))).sort((left, right) => new Date(left.at) - new Date(right.at));
+    const updatedAt = group.map((task) => task.updatedAt || task.createdAt).sort().at(-1);
+    events.push({ id: `evt_merge_assist_${master.id}`, taskId: master.id, action: "merge_assist_slots",
+      label: "合并同日协助时段", actorId: "system", actorName: "系统", role: "system", at: updatedAt,
+      fromStage: master.currentStage, toStage: master.currentStage, note: `保留原需求记录，时段：${slots.join("、")}`,
+      metadata: { sourceTaskIds: group.map((task) => task.id) } });
+    replacements.set(master.id, {
+      ...master, timeSlots: slots, timeSlot: slots.join("、"), startsAt, endsAt, publishAt: endsAt,
+      deadlines: { ...master.deadlines, [STAGES.WAITING_CLAIM]: startsAt, [STAGES.ASSISTING]: endsAt, [STAGES.ASSIST_DONE]: endsAt },
+      updatedAt, events
+    });
+    group.filter((task) => task.id !== master.id).forEach((task) => removed.add(task.id));
+  }
+  return tasks.filter((task) => !removed.has(task.id)).map((task) => replacements.get(task.id) || task);
 }
 
 function assertStage(task, allowed, action) {
@@ -482,6 +524,7 @@ export function deadlineForCurrentStage(task) {
 
 export function taskBucket(task, user, now = new Date()) {
   if ([STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED].includes(task.currentStage)) return "done";
+  if (task.currentStage === STAGES.WAITING_CLAIM) return "waiting";
   if (!canAct(task, user)) return "waiting";
   const deadline = new Date(deadlineForCurrentStage(task)).getTime();
   const nowMs = new Date(now).getTime();

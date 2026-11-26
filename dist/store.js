@@ -1,6 +1,6 @@
 const assetVersion = new URL(import.meta.url).searchParams.get("v");
 const assetSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : "";
-const { STAGES, STAGE_META } = await import(`./domain.js${assetSuffix}`);
+const { STAGES, STAGE_META, consolidateLegacyAssistanceTasks } = await import(`./domain.js${assetSuffix}`);
 
 const STORAGE_KEY = "video-collab-board:v1";
 const DEFAULT_ACCOUNTS = ["万万", "丝丝", "周周", "西西", "女团集合号"];
@@ -189,7 +189,7 @@ function normalizeState(parsed) {
         ? parsed.settings.cutDeliveryMethods
         : defaults.settings.cutDeliveryMethods
     },
-    tasks: (parsed.tasks || []).map((task) => {
+    tasks: consolidateLegacyAssistanceTasks((parsed.tasks || []).map((task) => {
       const mergedShootMaterialStage = task.needsShoot !== false && task.currentStage === STAGES.WAITING_MATERIAL;
       const events = Array.isArray(task.events) ? task.events : [];
       const migratedEvents = mergedShootMaterialStage && !events.some((event) => event.action === "merge_shoot_material")
@@ -222,7 +222,7 @@ function normalizeState(parsed) {
           deliveryNote: version.deliveryNote || ""
         }))
       };
-    })
+    }))
   };
 }
 

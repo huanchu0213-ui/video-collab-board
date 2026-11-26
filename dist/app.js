@@ -9,7 +9,7 @@ const [domainModule, storeModule, adapterModule, scheduleModule, exportModule] =
 ]);
 const {
   ACTIONS, ASSISTANCE_SLOTS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
-  applyAction, canAct, createAssistanceTasks, createTask, deadlineForCurrentStage, evaluateReminders,
+  applyAction, assistanceSlots, canAct, createAssistanceTask, createTask, deadlineForCurrentStage, evaluateReminders,
   getResponsible, requestTypeLabel, taskIsRelatedToUser, validateTemplate
 } = domainModule;
 const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
@@ -58,7 +58,7 @@ function taskBadge(task) {
 }
 
 function taskScheduleLabel(task) {
-  return isAssistance(task) ? `协助 ${escapeHtml(task.serviceDate)} ${escapeHtml(task.timeSlot)}` : `发布 ${formatDate(task.publishAt, false)}`;
+  return isAssistance(task) ? `协助 ${escapeHtml(task.serviceDate)} ${escapeHtml(assistanceSlots(task).join("、"))}` : `发布 ${formatDate(task.publishAt, false)}`;
 }
 
 const icon = (name) => {
@@ -213,7 +213,7 @@ function navButton(view, label, iconName) {
 
 function myActionableTasks() {
   const user = currentUser(state);
-  return state.tasks.filter((task) => canAct(task, user) && ![STAGES.PUBLISHED, STAGES.CANCELLED].includes(task.currentStage));
+  return state.tasks.filter((task) => canAct(task, user) && ![STAGES.WAITING_CLAIM, STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED].includes(task.currentStage));
 }
 
 function shanghaiDateKey(value) {
@@ -385,7 +385,7 @@ function renderTodo() {
   const user = currentUser(state);
   const nonOperationalStages = [STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED, STAGES.PAUSED];
   const activeTasks = state.tasks.filter((task) => !nonOperationalStages.includes(task.currentStage));
-  const actionableTasks = activeTasks.filter((task) => canAct(task, user));
+  const actionableTasks = activeTasks.filter((task) => task.currentStage !== STAGES.WAITING_CLAIM && canAct(task, user));
   const overdueTasks = actionableTasks
     .filter(isOverdue)
     .sort((left, right) => new Date(deadlineForCurrentStage(left)) - new Date(deadlineForCurrentStage(right)));
@@ -712,7 +712,7 @@ function renderCreateModal() {
   const requestType = modal.requestType || "video";
   const tabs = `<div class="create-type-tabs" role="tablist" aria-label="需求类型">${[["video", "视频剪辑"], ["shooting", "拍摄协助"], ["acting", "出镜协助"]].map(([type, label]) => `<button type="button" role="tab" aria-selected="${type === requestType}" class="${type === requestType ? "active" : ""}" data-create-type="${type}">${label}</button>`).join("")}</div>`;
   if (requestType !== "video") {
-    return modalShell(`新建${requestTypeLabel(requestType)}需求`, "一个时段生成一条独立需求，可分别认领和完成", `
+    return modalShell(`新建${requestTypeLabel(requestType)}需求`, "同一天选中的时段合在一条需求中，由一位剪辑承接", `
       ${tabs}
       <form id="assist-create-form" class="modal-form">
         <label class="form-field full"><span>事项说明（可选）</span><input name="title" maxlength="80" placeholder="不填则使用账号和需求类型自动命名" autofocus /></label>
@@ -920,13 +920,13 @@ async function handleSubmit(event) {
     event.preventDefault();
     const data = new FormData(event.target);
     try {
-      const tasks = createAssistanceTasks({
+      const task = createAssistanceTask({
         requestType: modal.requestType, title: data.get("title"), account: data.get("account"),
         serviceDate: data.get("serviceDate"), timeSlots: data.getAll("timeSlots")
       }, currentUser(state));
       modal = null;
-      persist({ ...state, tasks: [...tasks, ...state.tasks] });
-      toast(`已创建 ${tasks.length} 条协助需求，等待剪辑认领`);
+      persist({ ...state, tasks: [task, ...state.tasks] });
+      toast(`已创建 1 条协助需求，包含 ${task.timeSlots.length} 个时段，等待剪辑认领`);
     } catch (error) { toast(error.message, "error"); }
     return;
   }

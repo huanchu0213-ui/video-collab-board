@@ -1,4 +1,4 @@
-import { ACTIONS, STAGES, STAGE_META, getResponsible, requestTypeLabel } from "./domain.js";
+import { ACTIONS, STAGES, STAGE_META, assistanceSlots, getResponsible, requestTypeLabel } from "./domain.js";
 import { chinaDateKey } from "./schedule.js";
 
 export const EXPORT_COLUMNS = [
@@ -36,7 +36,7 @@ export function exportRows(tasks, startDate, endDate) {
     const assistance = task.requestType && task.requestType !== "video";
     const common = [
       requestTypeLabel(task.requestType), task.code, task.title, task.account, assistance ? "" : task.level,
-      assistance ? task.serviceDate : chinaDateKey(task.publishAt), assistance ? task.timeSlot : "",
+      assistance ? task.serviceDate : chinaDateKey(task.publishAt), assistance ? assistanceSlots(task).join("、") : "",
       task.directorName, task.editorName || "", STAGE_META[task.currentStage]?.label || task.currentStage
     ];
     for (const event of task.events || []) {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { currentUser, defaultState, loadState } from "../dist/store.js";
+import { ACTIONS, applyAction, createAssistanceTask } from "../dist/domain.js";
 
 test("defaultState 为默认成员补齐启用状态和页面权限", () => {
   const state = defaultState();
@@ -33,6 +34,26 @@ test("旧数据中拍摄后待素材任务自动并入剪辑中", () => {
     assert.equal(loaded.tasks[0].previousStage, "waiting_shoot");
     assert.equal(loaded.tasks[0].events.at(-1).action, "merge_shoot_material");
     assert.equal(loaded.tasks[0].events.at(-1).toStage, "editing");
+  } finally {
+    globalThis.localStorage = originalStorage;
+  }
+});
+
+test("旧版同日拆开的协助时段在加载时归为一条，保留已认领剪辑", () => {
+  const state = defaultState();
+  const director = state.users.find((user) => user.role === "director");
+  const editor = state.users.find((user) => user.role === "editor");
+  const now = new Date("2026-11-26T03:00:00Z");
+  const first = createAssistanceTask({ requestType: "acting", account: "丝丝", serviceDate: "2026-12-01", timeSlots: ["09:30-12:30"] }, director, now);
+  const second = createAssistanceTask({ requestType: "acting", account: "丝丝", serviceDate: "2026-12-01", timeSlots: ["12:30-15:30"] }, director, now);
+  state.tasks = [{ ...applyAction(first, ACTIONS.CLAIM, editor, {}, now), timeSlots: undefined }, { ...second, timeSlots: undefined }];
+  const originalStorage = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => JSON.stringify(state) };
+  try {
+    const loaded = loadState();
+    assert.equal(loaded.tasks.length, 1);
+    assert.deepEqual(loaded.tasks[0].timeSlots, ["09:30-12:30", "12:30-15:30"]);
+    assert.equal(loaded.tasks[0].editorId, editor.id);
   } finally {
     globalThis.localStorage = originalStorage;
   }
