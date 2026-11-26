@@ -498,7 +498,7 @@ function renderTaskCard(task, wide = false) {
   else if (overdue) deadlineCopy = relativeTime(deadline);
   else deadlineCopy = `${formatDate(deadline)} · ${relativeTime(deadline)}`;
   return `<article class="task-card ${wide ? "wide" : ""} ${overdue ? "overdue" : ""}" data-task-id="${task.id}" tabindex="0">
-    <div class="task-card-top">${taskBadge(task)}<span class="account">${escapeHtml(task.account)}</span><span class="task-code">${escapeHtml(task.code)}</span></div>
+    <div class="task-card-top">${taskBadge(task)}<span class="account" title="${escapeHtml(task.account)}">${escapeHtml(task.account)}</span><span class="task-code">${escapeHtml(task.code)}</span></div>
     <h4>${escapeHtml(task.title)}</h4>
     <div class="task-meta">
       <span class="stage-pill">${stageLabel(task.currentStage)}</span>
