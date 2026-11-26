@@ -29,6 +29,17 @@ test("周内按当前环节互斥分组，含暂停与取消任务", () => {
   const tasks = stages.map((currentStage, index) => ({ id: `task_${index}`, currentStage, publishAt: "2026-11-25T15:59:00.000Z" }));
   const [week] = weekSlices(tasks, "2026-11-23", 1);
   assert.equal(week.tasks.length, tasks.length);
-  assert.deepEqual(WEEK_GROUPS.map(({ key }) => week.groups[key].length), [1, 1, 1, 1, 1, 2]);
+  assert.deepEqual(WEEK_GROUPS.map(({ key }) => week.groups[key].length), [1, 1, 1, 1, 0, 0, 1, 2]);
   assert.equal(new Set(WEEK_GROUPS.flatMap(({ key }) => week.groups[key].map((task) => task.id))).size, tasks.length);
+});
+
+test("协助需求按服务日期归周，并按当前状态只归入一个分组", () => {
+  const tasks = [
+    { id: "assist_1", requestType: "shooting", serviceDate: "2026-11-26", currentStage: STAGES.ASSISTING, publishAt: "2026-11-26T10:30:00Z" },
+    { id: "assist_2", requestType: "acting", serviceDate: "2026-11-26", currentStage: STAGES.ASSIST_DONE, publishAt: "2026-11-26T10:30:00Z" }
+  ];
+  const [week] = weekSlices(tasks, "2026-11-23", 1);
+  assert.equal(week.tasks.length, 2);
+  assert.deepEqual(week.groups.assisting.map((item) => item.id), ["assist_1"]);
+  assert.deepEqual(week.groups.assist_done.map((item) => item.id), ["assist_2"]);
 });

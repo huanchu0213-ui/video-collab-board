@@ -1,19 +1,21 @@
 const assetVersion = new URL(import.meta.url).searchParams.get("v");
 const assetSuffix = assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : "";
-const [domainModule, storeModule, adapterModule, scheduleModule] = await Promise.all([
+const [domainModule, storeModule, adapterModule, scheduleModule, exportModule] = await Promise.all([
   import(`./domain.js${assetSuffix}`),
   import(`./store.js${assetSuffix}`),
   import(`./adapters.js${assetSuffix}`),
-  import(`./schedule.js${assetSuffix}`)
+  import(`./schedule.js${assetSuffix}`),
+  import(`./export.js${assetSuffix}`)
 ]);
 const {
-  ACTIONS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
-  applyAction, canAct, createTask, deadlineForCurrentStage, evaluateReminders,
-  getResponsible, taskIsRelatedToUser, validateTemplate
+  ACTIONS, ASSISTANCE_SLOTS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
+  applyAction, canAct, createAssistanceTasks, createTask, deadlineForCurrentStage, evaluateReminders,
+  getResponsible, requestTypeLabel, taskIsRelatedToUser, validateTemplate
 } = domainModule;
 const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
 const { createIdentityAdapter, createReminderAdapter } = adapterModule;
 const { WEEK_GROUPS, chinaDateKey, mondayOf, shiftDate, weekSlices } = scheduleModule;
+const { exportCsv } = exportModule;
 
 let state = loadState();
 if (!canAccessView(currentUser(state), state.activeView)) state.activeView = firstAccessibleView(currentUser(state));
@@ -24,6 +26,7 @@ let calendarMonth = "";
 let selectedTaskId = null;
 let modal = null;
 let scheduleMonday = mondayOf(chinaDateKey(new Date()));
+let exportDates = { start: chinaDateKey(new Date()), end: chinaDateKey(new Date()) };
 
 const app = document.querySelector("#app");
 const toastRoot = document.querySelector("#toast-root");
@@ -44,6 +47,18 @@ function levelBadge(level, className = "level") {
   const template = templateForLevel(level);
   const color = safeColor(template?.color);
   return `<span class="${className}" style="color:${color};background:${color}1a">${escapeHtml(level)}</span>`;
+}
+
+function isAssistance(task) {
+  return task.requestType === "shooting" || task.requestType === "acting";
+}
+
+function taskBadge(task) {
+  return isAssistance(task) ? `<span class="level assist-badge">${requestTypeLabel(task.requestType)}</span>` : levelBadge(task.level);
+}
+
+function taskScheduleLabel(task) {
+  return isAssistance(task) ? `协助 ${escapeHtml(task.serviceDate)} ${escapeHtml(task.timeSlot)}` : `发布 ${formatDate(task.publishAt, false)}`;
 }
 
 const icon = (name) => {
@@ -88,7 +103,7 @@ function relativeTime(value) {
 
 function isOverdue(task) {
   const deadline = deadlineForCurrentStage(task);
-  return deadline && new Date(deadline).getTime() < Date.now() && ![STAGES.PUBLISHED, STAGES.CANCELLED, STAGES.PAUSED].includes(task.currentStage);
+  return deadline && new Date(deadline).getTime() < Date.now() && ![STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED, STAGES.PAUSED].includes(task.currentStage);
 }
 
 function toast(message, type = "success") {
@@ -181,7 +196,7 @@ function renderShell(content) {
             <button class="mobile-identity-button" ${manualIdentity ? 'data-action="switch-user"' : "disabled"} title="${manualIdentity ? "切换手动身份" : "身份由飞书 SSO 自动识别"}" aria-label="${manualIdentity ? "切换手动身份" : "飞书 SSO 身份"}，当前为${escapeHtml(user.name)}"><span>${escapeHtml(user.avatar || user.name.slice(0, 1))}</span><small>${manualIdentity ? "切换身份" : "SSO 身份"}</small></button>
             <div class="sync-pill"><span></span> 本地已同步</div>
             <button class="activity-trigger" data-action="open-activity" title="查看团队操作记录"><span class="activity-full">操作记录</span><span class="activity-short">记录</span></button>
-            ${["director", "admin"].includes(user.role) ? `<button class="primary-button" data-action="open-create">${icon("plus")} 新建视频</button>` : ""}
+            ${["director", "admin"].includes(user.role) ? `<button class="primary-button" data-action="open-create">${icon("plus")} 新建需求</button>` : ""}
           </div>
         </header>
         <div class="page-body">${content}</div>
@@ -224,11 +239,11 @@ function matchesPublishDate(task, { date: value, start, end }) {
 }
 
 const TODO_DATE_PRESETS = [
-  ["all", "全部发布日期"],
-  ["today", "今天发布"],
+  ["all", "全部计划日期"],
+  ["today", "今天安排"],
   ["next3", "未来 3 天"],
   ["next7", "未来 7 天"],
-  ["overdue", "已过计划发布日期"]
+  ["overdue", "已过计划日期"]
 ];
 
 function activeDateFilters() {
@@ -288,7 +303,7 @@ function compactDateLabel(dateKey) {
 
 function dateFilterLabel() {
   const { date, start, end } = activeDateFilters();
-  if (date !== "custom") return TODO_DATE_PRESETS.find(([value]) => value === date)?.[1] || "全部发布日期";
+  if (date !== "custom") return TODO_DATE_PRESETS.find(([value]) => value === date)?.[1] || "全部计划日期";
   if (!start) return "选择日期区间";
   if (!end) return `${compactDateLabel(start)}·选择结束日`;
   return `${compactDateLabel(start)} – ${compactDateLabel(end)}`;
@@ -348,8 +363,8 @@ function renderDateFilter() {
       <button type="button" id="${state.activeView === "board" ? "board-date-filter" : "todo-date-filter"}" class="date-filter-trigger ${date === "custom" ? "has-range" : ""}" data-action="toggle-date-filter" aria-haspopup="dialog" aria-expanded="${datePickerOpen}">
         ${icon("calendar")}<span>${escapeHtml(dateFilterLabel())}</span><i aria-hidden="true">⌄</i>
       </button>
-      ${datePickerOpen ? `<div class="date-filter-popover" role="dialog" aria-label="选择发布日期区间">
-        <div class="date-filter-head"><div><strong>发布日期</strong><span>${selectionHint}</span></div><button type="button" data-action="clear-date-filter">清除</button></div>
+      ${datePickerOpen ? `<div class="date-filter-popover" role="dialog" aria-label="选择计划日期区间">
+        <div class="date-filter-head"><div><strong>计划日期</strong><span>${selectionHint}</span></div><button type="button" data-action="clear-date-filter">清除</button></div>
         <div class="date-preset-list" aria-label="快捷日期筛选">
           ${TODO_DATE_PRESETS.map(([value, label]) => `<button type="button" class="${date === value ? "active" : ""}" data-date-preset="${value}">${label}</button>`).join("")}
         </div>
@@ -368,7 +383,7 @@ function riskBanner() {
 
 function renderTodo() {
   const user = currentUser(state);
-  const nonOperationalStages = [STAGES.PUBLISHED, STAGES.CANCELLED, STAGES.PAUSED];
+  const nonOperationalStages = [STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED, STAGES.PAUSED];
   const activeTasks = state.tasks.filter((task) => !nonOperationalStages.includes(task.currentStage));
   const actionableTasks = activeTasks.filter((task) => canAct(task, user));
   const overdueTasks = actionableTasks
@@ -392,25 +407,25 @@ function renderTodo() {
     overdue: overdueTasks.length,
     pending: pendingTasks.length,
     waiting: waitingTasks.length,
-    published: allRelatedTasks.filter((task) => task.currentStage === STAGES.PUBLISHED).length
+    published: allRelatedTasks.filter((task) => [STAGES.PUBLISHED, STAGES.ASSIST_DONE].includes(task.currentStage)).length
   };
   const relatedDescription = user.role === "director"
-    ? "我创建的全部任务，包含已发布、暂停和取消"
+    ? "我创建的全部需求，包含已发布、已完成、暂停和取消"
     : user.role === "editor"
-      ? "我认领过的全部任务，转交后仍保留记录"
-      : "全部任务，包含已发布、暂停和取消";
+      ? "我认领过的全部需求，转交后仍保留记录"
+      : "全部需求，包含已发布、已完成、暂停和取消";
   const greeting = new Date().getHours() < 12 ? "早上好" : new Date().getHours() < 18 ? "下午好" : "晚上好";
   return renderShell(`
     ${riskBanner()}
     <section class="hero-panel">
-      <div><span class="eyebrow">${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span><h2>${greeting}，${escapeHtml(user.name)}。</h2><p>你有 <strong>${counts.overdue + counts.pending}</strong> 条片子需要推进，优先处理超期任务。</p></div>
+      <div><span class="eyebrow">${new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric", weekday: "long" }).format(new Date())}</span><h2>${greeting}，${escapeHtml(user.name)}。</h2><p>你有 <strong>${counts.overdue + counts.pending}</strong> 条需求需要推进，优先处理超期任务。</p></div>
       <div class="hero-orbit"><span>${counts.overdue + counts.pending}</span><small>待推进</small></div>
     </section>
     <section class="metric-grid">
       ${metricCard("超期任务", counts.overdue, "需要立即处理", "danger")}
       ${metricCard("待处理", counts.pending, "当前由你推进", "amber")}
       ${metricCard("等待他人", counts.waiting, "当前无需操作", "blue")}
-      ${metricCard("已发布", counts.published, "全部相关任务", "mint")}
+      ${metricCard("已发布 / 完成", counts.published, "全部相关需求", "mint")}
     </section>
     ${user.role === "editor" ? renderClaimPool() : ""}
     <section class="todo-grid operational-grid">
@@ -437,8 +452,8 @@ function renderClaimPool() {
   const tasks = state.tasks.filter((task) => task.currentStage === STAGES.WAITING_CLAIM && !task.readOnly)
     .sort((left, right) => new Date(deadlineForCurrentStage(left)) - new Date(deadlineForCurrentStage(right)));
   return `<section class="claim-pool" aria-label="剪辑认领池">
-    <header><div><span class="eyebrow">CLAIM POOL</span><h3>剪辑认领池 <em>${tasks.length}</em></h3><p>按认领截止时间排序，认领后由你承接这条片子</p></div></header>
-    <div class="claim-pool-list" ${tasks.length > 4 ? 'tabindex="0" aria-label="待认领任务列表"' : ""}>${tasks.length ? tasks.map((task) => `<article class="claim-pool-item"><div class="claim-pool-title">${levelBadge(task.level)}<strong>${escapeHtml(task.title)}</strong></div><p>${escapeHtml(task.account)} · 编导 ${escapeHtml(task.directorName || "待指定")} · 发布 ${formatDate(task.publishAt, false)}</p><span class="${isOverdue(task) ? "is-overdue" : ""}">认领截止 ${formatDate(deadlineForCurrentStage(task))}</span><button class="quick-button" data-task-action="${ACTIONS.CLAIM}" data-task-id="${task.id}">认领</button></article>`).join("") : `<div class="empty-inline">目前没有待认领任务</div>`}</div>
+    <header><div><span class="eyebrow">CLAIM POOL</span><h3>剪辑认领池 <em>${tasks.length}</em></h3><p>按认领截止时间排序，包含视频剪辑及拍摄／出镜协助</p></div></header>
+    <div class="claim-pool-list" ${tasks.length > 4 ? 'tabindex="0" aria-label="待认领任务列表"' : ""}>${tasks.length ? tasks.map((task) => `<article class="claim-pool-item"><div class="claim-pool-title">${taskBadge(task)}<strong>${escapeHtml(task.title)}</strong></div><p>${escapeHtml(task.account)} · 编导 ${escapeHtml(task.directorName || "待指定")} · ${taskScheduleLabel(task)}</p><span class="${isOverdue(task) ? "is-overdue" : ""}">认领截止 ${formatDate(deadlineForCurrentStage(task))}</span><button class="quick-button" data-task-action="${ACTIONS.CLAIM}" data-task-id="${task.id}">认领</button></article>`).join("") : `<div class="empty-inline">目前没有待认领任务</div>`}</div>
   </section>`;
 }
 
@@ -463,7 +478,8 @@ function primaryAction(task) {
     [STAGES.INITIAL_REVIEW]: ["open-review", "开始初审"],
     [STAGES.DIRECTOR_REVIEW]: ["open-review", "开始审核"],
     [STAGES.MODIFYING]: [ACTIONS.SUBMIT_CUT, "提交修改"],
-    [STAGES.READY_PUBLISH]: [ACTIONS.PUBLISH, "确认发布"]
+    [STAGES.READY_PUBLISH]: [ACTIONS.PUBLISH, "确认发布"],
+    [STAGES.ASSISTING]: [ACTIONS.COMPLETE_ASSIST, "确认协助完成"]
   };
   return map[task.currentStage] || null;
 }
@@ -476,12 +492,13 @@ function renderTaskCard(task, wide = false) {
   const actionable = canAct(task, currentUser(state));
   let deadlineCopy;
   if (task.currentStage === STAGES.PUBLISHED) deadlineCopy = `已发布 · ${formatDate(task.completedAt || task.publishAt)}`;
+  else if (task.currentStage === STAGES.ASSIST_DONE) deadlineCopy = `已完成 · ${formatDate(task.completedAt || task.endsAt)}`;
   else if (task.currentStage === STAGES.CANCELLED) deadlineCopy = `已取消 · ${formatDate(task.updatedAt || task.publishAt)}`;
   else if (task.currentStage === STAGES.PAUSED) deadlineCopy = "已暂停，当前不发送提醒";
   else if (overdue) deadlineCopy = relativeTime(deadline);
   else deadlineCopy = `${formatDate(deadline)} · ${relativeTime(deadline)}`;
   return `<article class="task-card ${wide ? "wide" : ""} ${overdue ? "overdue" : ""}" data-task-id="${task.id}" tabindex="0">
-    <div class="task-card-top">${levelBadge(task.level)}<span class="account">${escapeHtml(task.account)}</span><span class="task-code">${escapeHtml(task.code)}</span></div>
+    <div class="task-card-top">${taskBadge(task)}<span class="account">${escapeHtml(task.account)}</span><span class="task-code">${escapeHtml(task.code)}</span></div>
     <h4>${escapeHtml(task.title)}</h4>
     <div class="task-meta">
       <span class="stage-pill">${stageLabel(task.currentStage)}</span>
@@ -495,7 +512,7 @@ function renderTaskCard(task, wide = false) {
 }
 
 function renderBoard() {
-  const stages = [STAGES.WAITING_CLAIM, STAGES.WAITING_SHOOT, STAGES.WAITING_MATERIAL, STAGES.EDITING, STAGES.INITIAL_REVIEW, STAGES.DIRECTOR_REVIEW, STAGES.MODIFYING, STAGES.READY_PUBLISH, STAGES.PUBLISHED];
+  const stages = [STAGES.WAITING_CLAIM, STAGES.WAITING_SHOOT, STAGES.WAITING_MATERIAL, STAGES.EDITING, STAGES.INITIAL_REVIEW, STAGES.DIRECTOR_REVIEW, STAGES.MODIFYING, STAGES.READY_PUBLISH, STAGES.ASSISTING, STAGES.PUBLISHED, STAGES.ASSIST_DONE];
   const visible = filteredTasks();
   return renderShell(`
     ${riskBanner()}
@@ -505,13 +522,13 @@ function renderBoard() {
         <label class="search-box">${icon("search")}<input id="board-search" value="${escapeHtml(filters.query)}" placeholder="搜索选题、账号或任务编号" /></label>
       </div>
       <div class="board-filter-options">
-        <select id="filter-level"><option value="all">全部等级</option>${state.templates.map((template) => `<option value="${escapeHtml(template.level)}" ${filters.level === template.level ? "selected" : ""}>${escapeHtml(template.name)}${template.enabled === false ? "（已停用）" : ""}</option>`).join("")}</select>
+        <select id="filter-level"><option value="all">全部等级 / 类型</option><option value="assistance" ${filters.level === "assistance" ? "selected" : ""}>拍摄／出镜协助</option>${state.templates.map((template) => `<option value="${escapeHtml(template.level)}" ${filters.level === template.level ? "selected" : ""}>${escapeHtml(template.name)}${template.enabled === false ? "（已停用）" : ""}</option>`).join("")}</select>
         <select id="filter-owner"><option value="all">全部负责人</option>${activeUsers().map((user) => `<option value="${user.id}" ${filters.owner === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("")}</select>
         <select id="filter-risk"><option value="all">全部状态</option><option value="overdue" ${filters.risk === "overdue" ? "selected" : ""}>仅看超期</option><option value="soon" ${filters.risk === "soon" ? "selected" : ""}>48h内发布</option></select>
         <span class="result-count">${visible.length} 条任务</span>
       </div>
     </section>
-    <section class="kanban" aria-label="团队视频任务看板">
+    <section class="kanban" aria-label="团队需求看板">
       ${stages.map((stage) => {
         const tasks = visible.filter((task) => task.currentStage === stage);
         return `<div class="kanban-column"><header><div><span class="column-dot stage-${stage}"></span><h3>${STAGE_META[stage].label}</h3></div><em>${tasks.length}</em></header><div class="kanban-stack">${tasks.map((task) => renderTaskCard(task)).join("") || `<div class="column-empty">暂无任务</div>`}</div></div>`;
@@ -525,7 +542,8 @@ function filteredTasks() {
     if (!matchesPublishDate(task, filters)) return false;
     const text = `${task.title} ${task.account} ${task.code}`.toLowerCase();
     if (filters.query && !text.includes(filters.query.toLowerCase())) return false;
-    if (filters.level !== "all" && task.level !== filters.level) return false;
+    if (filters.level === "assistance" && !isAssistance(task)) return false;
+    if (filters.level !== "all" && filters.level !== "assistance" && task.level !== filters.level) return false;
     if (filters.owner !== "all" && ![task.directorId, task.editorId, task.reviewerId, task.shooterId].includes(filters.owner)) return false;
     if (filters.risk === "overdue" && !isOverdue(task)) return false;
     if (filters.risk === "soon") {
@@ -543,7 +561,7 @@ function weekLabel(start, end) {
 }
 
 function renderWeekGroup(title, tasks) {
-  return `<div class="week-group"><div class="week-group-heading"><strong>${title}</strong><em>${tasks.length}</em></div><div class="week-task-list">${tasks.map((task) => `<button type="button" class="week-task" data-open-task="${task.id}"><span>${levelBadge(task.level)}<strong>${escapeHtml(task.title)}</strong></span><small>${escapeHtml(task.account)} · ${stageLabel(task.currentStage)} · 计划发布 ${formatDate(task.publishAt, false)}</small></button>`).join("")}</div></div>`;
+  return `<div class="week-group"><div class="week-group-heading"><strong>${title}</strong><em>${tasks.length}</em></div><div class="week-task-list">${tasks.map((task) => `<button type="button" class="week-task" data-open-task="${task.id}"><span>${taskBadge(task)}<strong>${escapeHtml(task.title)}</strong></span><small>${escapeHtml(task.account)} · ${stageLabel(task.currentStage)} · ${taskScheduleLabel(task)}</small></button>`).join("")}</div></div>`;
 }
 
 function renderSchedule() {
@@ -551,7 +569,7 @@ function renderSchedule() {
   const lastEnd = slices.at(-1).end;
   const todayMonday = mondayOf(chinaDateKey(new Date()));
   return renderShell(`
-    <section class="schedule-intro"><div><span class="eyebrow">WEEKLY OVERVIEW</span><h2>按自然周查看发布排期</h2><p>每条任务按计划发布日期归入一个自然周，并根据当前环节只显示一次；点击任务可查看完整节点记录。</p></div><div class="schedule-range">${weekLabel(scheduleMonday, lastEnd)}</div></section>
+    <section class="schedule-intro"><div><span class="eyebrow">WEEKLY OVERVIEW</span><h2>按自然周查看需求排期</h2><p>视频按计划发布日期、协助按服务日期归入自然周；每条需求只显示一次，点击可查看节点记录。</p></div><div class="schedule-range">${weekLabel(scheduleMonday, lastEnd)}</div></section>
     <div class="schedule-controls"><button class="secondary-button" data-action="schedule-prev">上一组四周</button><button class="secondary-button" data-action="schedule-today" ${scheduleMonday === todayMonday ? "disabled" : ""}>回到本周</button><button class="secondary-button" data-action="schedule-next">下一组四周</button><label>跳转到日期 <input id="schedule-jump" type="date" value="${scheduleMonday}" aria-label="跳转到所在自然周" /></label></div>
     <div class="week-slices">${slices.map((week) => `<section class="week-slice ${week.start === todayMonday ? "current" : ""}" aria-label="${weekLabel(week.start, week.end)}排期"><header><div><span>${week.start === todayMonday ? "本周" : "自然周"}</span><h3>${weekLabel(week.start, week.end)}</h3></div><strong>${week.tasks.length} 条任务</strong></header><div class="week-counts">${WEEK_GROUPS.map(({ key, label }) => `<span>${label} <b>${week.groups[key].length}</b></span>`).join("")}</div><div class="week-groups">${week.tasks.length ? WEEK_GROUPS.filter(({ key }) => week.groups[key].length).map(({ key, label }) => renderWeekGroup(label, week.groups[key])).join("") : `<div class="week-empty-state">这个自然周暂无任务</div>`}</div></section>`).join("")}</div>
   `);
@@ -577,6 +595,7 @@ function renderAdmin() {
         <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady ? "" : "disabled"}/><i></i></label><button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div></section>
         <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号、素材给予方式和交片渠道，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>交片渠道</strong><div class="catalog-chips">${state.settings.cutDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
         <section class="settings-card"><div class="settings-icon">${icon("user")}</div><h3>平台权限与身份</h3><p>手动维护身份、角色与页面权限，也可切换为飞书 SSO 自动识别。</p><dl class="config-list"><div><dt>身份模式</dt><dd>${manualIdentity ? "手动配置" : "飞书 SSO"}</dd></div><div><dt>启用身份</dt><dd>${enabledUsers.length} 人</dd></div><div><dt>后台管理员</dt><dd>${enabledUsers.filter((user) => canAccessView(user, "admin")).length} 人</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl><button class="secondary-button full" data-action="open-access-settings">管理平台权限与身份</button></section>
+        <section class="settings-card"><div class="settings-icon">${icon("calendar")}</div><h3>需求节点数据导出</h3><p>按视频计划发布日期或协助服务日期筛选，导出节点负责人、计划截止、实际完成及操作记录。当前仅导出本浏览器的数据。</p><form id="export-form" class="export-form"><label>开始日期<input name="start" type="date" value="${exportDates.start}" required /></label><label>结束日期<input name="end" type="date" value="${exportDates.end}" required /></label><button class="secondary-button full" type="submit">导出 CSV</button></form></section>
         <button class="danger-link" data-action="reset-demo">恢复演示数据</button>
       </aside>
     </section>
@@ -605,10 +624,10 @@ function renderDrawer() {
   const deadline = deadlineForCurrentStage(task);
   const action = primaryAction(task);
   return `<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" aria-label="任务详情">
-    <header class="drawer-header"><div><div class="drawer-badges">${levelBadge(task.level)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${task.needsShoot ? "待拍摄素材" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
-    <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div><small>承接剪辑</small><strong>${escapeHtml(task.editorName || "待认领")}</strong></div><div><small>负责编导</small><strong>${escapeHtml(task.directorName || "待指定")}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${relativeTime(deadline)}</span></div></div>
+    <header class="drawer-header"><div><div class="drawer-badges">${taskBadge(task)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${isAssistance(task) ? taskScheduleLabel(task) : task.needsShoot ? "待拍摄素材" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
+    <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div><small>${isAssistance(task) ? "承接协助" : "承接剪辑"}</small><strong>${escapeHtml(task.editorName || "待认领")}</strong></div><div><small>负责编导</small><strong>${escapeHtml(task.directorName || "待指定")}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${[STAGES.ASSIST_DONE, STAGES.PUBLISHED].includes(task.currentStage) ? "已完成" : relativeTime(deadline)}</span></div></div>
     <div class="progress-track">${renderProgress(task)}</div>
-    <section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>
+    ${isAssistance(task) ? "" : `<section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>`}
     <section class="drawer-section"><div class="section-title"><h3>操作时间轴</h3><span>${task.events.length} 条记录</span></div><div class="timeline">${[...task.events].reverse().map(renderEvent).join("")}</div></section>
     <footer class="drawer-actions">
       ${canAct(task, currentUser(state)) && action ? `<button class="primary-button grow" data-task-action="${action[0]}" data-task-id="${task.id}">${action[1]}</button>` : ""}
@@ -618,6 +637,11 @@ function renderDrawer() {
 }
 
 function renderProgress(task) {
+  if (isAssistance(task)) {
+    const stages = [STAGES.WAITING_CLAIM, STAGES.ASSISTING, STAGES.ASSIST_DONE];
+    const current = stages.indexOf(task.currentStage);
+    return stages.map((stage, index) => `<div class="progress-step ${index < current ? "done" : index === current ? "current" : ""}"><i>${index < current ? "✓" : index + 1}</i><span>${stageLabel(stage)}</span></div>`).join("");
+  }
   const materialStage = task.needsShoot ? STAGES.WAITING_SHOOT : STAGES.WAITING_MATERIAL;
   const stages = [STAGES.WAITING_CLAIM, materialStage, STAGES.EDITING, ...(task.requiresInitialReview ? [STAGES.INITIAL_REVIEW] : []), STAGES.DIRECTOR_REVIEW, STAGES.MODIFYING, STAGES.READY_PUBLISH, STAGES.PUBLISHED];
   const current = stages.indexOf(task.currentStage);
@@ -685,9 +709,25 @@ function renderPreviewModal() {
 }
 
 function renderCreateModal() {
+  const requestType = modal.requestType || "video";
+  const tabs = `<div class="create-type-tabs" role="tablist" aria-label="需求类型">${[["video", "视频剪辑"], ["shooting", "拍摄协助"], ["acting", "出镜协助"]].map(([type, label]) => `<button type="button" role="tab" aria-selected="${type === requestType}" class="${type === requestType ? "active" : ""}" data-create-type="${type}">${label}</button>`).join("")}</div>`;
+  if (requestType !== "video") {
+    return modalShell(`新建${requestTypeLabel(requestType)}需求`, "一个时段生成一条独立需求，可分别认领和完成", `
+      ${tabs}
+      <form id="assist-create-form" class="modal-form">
+        <label class="form-field full"><span>事项说明（可选）</span><input name="title" maxlength="80" placeholder="不填则使用账号和需求类型自动命名" autofocus /></label>
+        <label class="form-field full"><span>账号 / 达人 <em>*</em></span><select name="account" required><option value="">请选择</option>${state.settings.accounts.map((account) => `<option value="${escapeHtml(account)}">${escapeHtml(account)}</option>`).join("")}</select></label>
+        <label class="form-field full"><span>协助日期 <em>*</em></span><input name="serviceDate" type="date" required /></label>
+        <fieldset class="assist-slots full"><legend>协助时段 <em>*</em>（可多选）</legend>${ASSISTANCE_SLOTS.map((slot) => `<label><input type="checkbox" name="timeSlots" value="${slot}" /><span>${slot}</span></label>`).join("")}</fieldset>
+        ${state.settings.accounts.length ? "" : `<div class="form-warning full">请先在管理后台配置至少一个账号 / 达人。</div>`}
+        <div class="modal-footer full"><button type="button" class="secondary-button" data-action="close-modal">取消</button><button type="submit" class="primary-button" ${state.settings.accounts.length ? "" : "disabled"}>创建协助需求</button></div>
+      </form>
+    `);
+  }
   const readyTemplates = activeTemplates().filter((item) => item.confirmed && validateTemplate(item).valid);
   const canCreate = readyTemplates.length > 0 && state.settings.accounts.length > 0;
   return modalShell("新建视频任务", "五项选择完成后即可发布任务", `
+    ${tabs}
     <form id="create-form" class="modal-form">
       <label class="form-field full"><span>视频选题 <em>*</em></span><input name="title" required maxlength="80" placeholder="一句话说明这条片子要讲什么" autofocus /></label>
       <label class="form-field"><span>账号 / 达人 <em>*</em></span><select name="account" required><option value="">请选择</option>${state.settings.accounts.map((account) => `<option value="${escapeHtml(account)}">${escapeHtml(account)}</option>`).join("")}</select></label>
@@ -764,6 +804,7 @@ function renderTemplateModal() {
 
 function actionSpec(task, action) {
   const specs = {
+    [ACTIONS.COMPLETE_ASSIST]: { title: "确认协助完成", desc: "完成后记录协助人和时间，需求将归档", note: "完成备注（可选）", submit: "确认完成" },
     [ACTIONS.SUBMIT_CUT]: { title: task.currentStage === STAGES.MODIFYING ? "提交修改版本" : "提交成片", desc: "选择交片渠道；新版本会保留，不覆盖历史成片", note: "版本说明（可选）", submit: "提交审核" },
     [ACTIONS.PUBLISH]: { title: "确认视频发布", desc: "发布后任务归档，只读保留完整记录", url: "发布链接（可选）", note: "发布备注（可选）", submit: "确认已发布" },
     [ACTIONS.PAUSE]: { title: "暂停任务", desc: "暂停后停止所有提醒，恢复时回到原环节", note: "暂停原因", submit: "确认暂停", danger: true },
@@ -786,7 +827,7 @@ function renderActionModal() {
     return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "备注可选，填写后直接选择审核结果", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><form id="review-form" class="review-inline-form"><label class="form-field"><span>审核备注（可选）</span><textarea name="note" placeholder="可补充通过说明或需要修改的内容"></textarea></label><div class="review-actions"><button type="submit" class="approve-button" name="reviewAction" value="${ACTIONS.APPROVE}">✓ 通过审核</button><button type="submit" class="reject-button" name="reviewAction" value="${ACTIONS.REJECT}">↩ 退回修改</button></div></form>`);
   }
   if (modal.action === "more") {
-    return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions"><button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button><button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
+    return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions">${isAssistance(task) ? "" : `<button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button>`}<button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
   }
   if (modal.action === "reschedule") {
     return modalShell("调整发布日期", "系统将按已确认模板重新计算节点", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.RESCHEDULE}"/><label class="form-field full"><span>新计划发布日期</span><input name="publishAt" type="date" required/></label><label class="form-field full"><span>改期原因</span><textarea name="note" required placeholder="说明为什么需要改期"></textarea></label>${modalFooter("确认改期")}</form>`);
@@ -856,6 +897,39 @@ async function performAction(taskId, action, payload) {
 }
 
 async function handleSubmit(event) {
+  if (event.target.id === "export-form") {
+    event.preventDefault();
+    if (currentUser(state).role !== "admin") return toast("只有管理员可以导出数据", "error");
+    const data = new FormData(event.target);
+    exportDates = { start: String(data.get("start") || ""), end: String(data.get("end") || "") };
+    try {
+      const { csv, count } = exportCsv(state.tasks, exportDates.start, exportDates.end);
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `达人视频协作需求_${exportDates.start}_${exportDates.end}.csv`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(`已导出 ${count} 条需求的节点记录`);
+    } catch (error) { toast(error.message, "error"); }
+    return;
+  }
+  if (event.target.id === "assist-create-form") {
+    event.preventDefault();
+    const data = new FormData(event.target);
+    try {
+      const tasks = createAssistanceTasks({
+        requestType: modal.requestType, title: data.get("title"), account: data.get("account"),
+        serviceDate: data.get("serviceDate"), timeSlots: data.getAll("timeSlots")
+      }, currentUser(state));
+      modal = null;
+      persist({ ...state, tasks: [...tasks, ...state.tasks] });
+      toast(`已创建 ${tasks.length} 条协助需求，等待剪辑认领`);
+    } catch (error) { toast(error.message, "error"); }
+    return;
+  }
   if (event.target.id === "review-form") {
     event.preventDefault();
     const action = event.submitter?.value;
@@ -968,6 +1042,7 @@ async function handleSubmit(event) {
       persist({ ...state, tasks: [task, ...state.tasks] });
       toast("任务已创建并进入剪辑认领池");
     } catch (error) { toast(error.message, "error"); }
+    return;
   }
   if (event.target.id === "action-form") {
     event.preventDefault();
@@ -1000,6 +1075,12 @@ async function scanReminders() {
 }
 
 function handleClick(event) {
+  const createType = event.target.closest("[data-create-type]")?.dataset.createType;
+  if (createType) {
+    modal = { type: "create", requestType: createType };
+    render();
+    return;
+  }
   const previewButton = event.target.closest("[data-preview-task]");
   if (previewButton) {
     modal = { type: "preview", taskId: previewButton.dataset.previewTask, kind: previewButton.dataset.previewKind, index: Number(previewButton.dataset.previewIndex) };
@@ -1060,7 +1141,7 @@ function handleClick(event) {
   const actionEl = event.target.closest("[data-action]");
   if (actionEl) {
     const action = actionEl.dataset.action;
-    if (action === "open-create") modal = { type: "create" };
+    if (action === "open-create") modal = { type: "create", requestType: "video" };
     if (action === "open-activity") modal = { type: "activity" };
     if (action === "schedule-prev") scheduleMonday = shiftDate(scheduleMonday, -28);
     if (action === "schedule-next") scheduleMonday = shiftDate(scheduleMonday, 28);

@@ -10,6 +10,8 @@ export const STAGES = {
   MODIFYING: "modifying",
   READY_PUBLISH: "ready_publish",
   PUBLISHED: "published",
+  ASSISTING: "assisting",
+  ASSIST_DONE: "assist_done",
   PAUSED: "paused",
   CANCELLED: "cancelled"
 };
@@ -24,12 +26,15 @@ export const STAGE_META = {
   [STAGES.MODIFYING]: { label: "修改中", action: "提交修改", owner: "editor" },
   [STAGES.READY_PUBLISH]: { label: "待发布", action: "确认发布", owner: "director" },
   [STAGES.PUBLISHED]: { label: "已发布", action: "已完成", owner: "director" },
+  [STAGES.ASSISTING]: { label: "协助进行中", action: "确认协助完成", owner: "editor" },
+  [STAGES.ASSIST_DONE]: { label: "协助已完成", action: "已完成", owner: "editor" },
   [STAGES.PAUSED]: { label: "已暂停", action: "恢复任务", owner: "director" },
   [STAGES.CANCELLED]: { label: "已取消", action: "已取消", owner: "director" }
 };
 
 export const ACTIONS = {
   CREATE: "create",
+  CREATE_ASSIST: "create_assist",
   CLAIM: "claim",
   SHOOT_COMPLETE: "shoot_complete",
   MATERIAL_READY: "material_ready",
@@ -37,6 +42,7 @@ export const ACTIONS = {
   APPROVE: "approve",
   REJECT: "reject",
   PUBLISH: "publish",
+  COMPLETE_ASSIST: "complete_assist",
   PAUSE: "pause",
   RESUME: "resume",
   CANCEL: "cancel",
@@ -46,6 +52,7 @@ export const ACTIONS = {
 
 const ACTION_LABELS = {
   [ACTIONS.CREATE]: "创建并发布任务",
+  [ACTIONS.CREATE_ASSIST]: "创建协助需求",
   [ACTIONS.CLAIM]: "认领任务",
   [ACTIONS.SHOOT_COMPLETE]: "完成拍摄并确认素材",
   [ACTIONS.MATERIAL_READY]: "确认素材就绪",
@@ -53,6 +60,7 @@ const ACTION_LABELS = {
   [ACTIONS.APPROVE]: "审核通过",
   [ACTIONS.REJECT]: "退回修改",
   [ACTIONS.PUBLISH]: "确认视频发布",
+  [ACTIONS.COMPLETE_ASSIST]: "确认协助完成",
   [ACTIONS.PAUSE]: "暂停任务",
   [ACTIONS.RESUME]: "恢复任务",
   [ACTIONS.CANCEL]: "取消任务",
@@ -75,6 +83,12 @@ export const TEMPLATE_INTERVAL_LABELS = {
   [STAGES.DIRECTOR_REVIEW]: "上级确认 → 编导审核",
   [STAGES.READY_PUBLISH]: "编导审核 → 视频发布"
 };
+
+export const ASSISTANCE_SLOTS = ["09:30-12:30", "12:30-15:30", "15:30-18:30"];
+
+export function requestTypeLabel(type) {
+  return ({ video: "视频剪辑", shooting: "拍摄协助", acting: "出镜协助" })[type || "video"] || "视频剪辑";
+}
 
 export function makeId(prefix = "id") {
   if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID()}`;
@@ -136,6 +150,7 @@ export function nextReviewStage(task) {
 }
 
 function eventFor(task, action, actor, now, payload = {}) {
+  const owner = task.currentStage ? getResponsible(task) : null;
   return {
     id: makeId("evt"),
     taskId: task.id,
@@ -148,7 +163,7 @@ function eventFor(task, action, actor, now, payload = {}) {
     fromStage: task.currentStage,
     toStage: payload.toStage ?? task.currentStage,
     note: payload.note || "",
-    metadata: payload.metadata || {}
+    metadata: { ...(payload.metadata || {}), plannedDeadline: task.currentStage ? task.deadlines?.[task.currentStage] || "" : "", responsibleId: owner?.id || "", responsibleName: owner?.name || "" }
   };
 }
 
@@ -166,6 +181,7 @@ export function createTask(input, actor, templates, now = new Date()) {
     id,
     code: `VD-${String(new Date(now).getFullYear()).slice(-2)}${String(new Date(now).getMonth() + 1).padStart(2, "0")}-${id.slice(-5).toUpperCase()}`,
     title: input.title.trim(),
+    requestType: "video",
     account: input.account.trim(),
     level: input.level,
     levelName: template.name,
@@ -204,6 +220,40 @@ export function createTask(input, actor, templates, now = new Date()) {
   return task;
 }
 
+export function createAssistanceTasks(input, actor, now = new Date()) {
+  if (!actor || !["director", "admin"].includes(actor.role)) throw new Error("只有编导或管理员可以创建协助需求");
+  if (!["shooting", "acting"].includes(input.requestType)) throw new Error("请选择拍摄协助或出镜协助");
+  const account = String(input.account || "").trim();
+  const serviceDate = String(input.serviceDate || "");
+  const slots = [...new Set(input.timeSlots || [])];
+  if (!account) throw new Error("请选择账号 / 达人");
+  const parsedDate = new Date(`${serviceDate}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== serviceDate) throw new Error("请选择有效的协助日期");
+  if (!slots.length || slots.some((slot) => !ASSISTANCE_SLOTS.includes(slot))) throw new Error("请至少选择一个三小时时段");
+  const title = String(input.title || "").trim() || `${account}${requestTypeLabel(input.requestType)}`;
+  return slots.map((slot) => {
+    const [startTime, endTime] = slot.split("-");
+    const startsAt = new Date(`${serviceDate}T${startTime}:00+08:00`).toISOString();
+    const endsAt = new Date(`${serviceDate}T${endTime}:00+08:00`).toISOString();
+    const id = makeId("assist");
+    const task = {
+      id, code: `AS-${serviceDate.replaceAll("-", "").slice(2)}-${id.slice(-5).toUpperCase()}`,
+      title, account, requestType: input.requestType, level: "", levelName: requestTypeLabel(input.requestType),
+      serviceDate, timeSlot: slot, startsAt, endsAt, publishAt: endsAt,
+      currentStage: STAGES.WAITING_CLAIM, previousStage: null,
+      directorId: actor.id, directorName: actor.name, editorId: null, editorName: null,
+      reviewerId: null, reviewerName: "", shooterId: null, shooterName: "",
+      requiresInitialReview: false, needsShoot: false, scriptUrl: "", materialUrl: "",
+      materialMethod: "", materialNote: "", materialAttachments: [], versions: [], scheduleIntervals: {},
+      deadlines: { [STAGES.WAITING_CLAIM]: startsAt, [STAGES.ASSISTING]: endsAt, [STAGES.ASSIST_DONE]: endsAt },
+      stageStartedAt: new Date(now).toISOString(), createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
+      completedAt: null, archived: false, readOnly: false, reminderEnabled: true, pauseReason: "", events: []
+    };
+    task.events.push(eventFor({ ...task, currentStage: null }, ACTIONS.CREATE_ASSIST, actor, now, { toStage: task.currentStage, metadata: { timeSlot: slot } }));
+    return task;
+  });
+}
+
 function assertStage(task, allowed, action) {
   if (task.readOnly || task.archived) throw new Error("归档任务不可修改");
   if (!allowed.includes(task.currentStage)) throw new Error(`当前环节不能执行“${ACTION_LABELS[action]}”`);
@@ -236,6 +286,7 @@ function authorizeAction(task, action, actor) {
   if (action === ACTIONS.SHOOT_COMPLETE && ![task.shooterId, task.directorId].includes(actor.id)) throw new Error("只有拍摄负责人或编导可以确认拍摄");
   if (action === ACTIONS.MATERIAL_READY && ![task.shooterId, task.directorId].includes(actor.id)) throw new Error("只有素材负责人或编导可以确认素材");
   if (action === ACTIONS.SUBMIT_CUT && actor.id !== task.editorId) throw new Error("只有已认领剪辑可以提交成片");
+  if (action === ACTIONS.COMPLETE_ASSIST && actor.id !== task.editorId) throw new Error("只有已认领协助人员可以确认完成");
   if ([ACTIONS.APPROVE, ACTIONS.REJECT].includes(action)) {
     const expected = task.currentStage === STAGES.INITIAL_REVIEW ? task.reviewerId : task.directorId;
     if (actor.id !== expected) throw new Error("只有当前审核负责人可以处理审核");
@@ -269,14 +320,24 @@ function normalizeAttachment(input) {
 }
 
 export function applyAction(task, action, actor, payload = {}, now = new Date()) {
+  if (task.readOnly || task.archived || [STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED].includes(task.currentStage)) throw new Error("已结束任务不可修改");
   authorizeAction(task, action, actor);
   switch (action) {
     case ACTIONS.CLAIM: {
       assertStage(task, [STAGES.WAITING_CLAIM], action);
       if (task.editorId && task.editorId !== actor.id) throw new Error("任务已被其他剪辑认领");
-      const next = move(task, nextAfterClaim(task), actor, action, now);
+      const next = move(task, task.requestType && task.requestType !== "video" ? STAGES.ASSISTING : nextAfterClaim(task), actor, action, now);
       next.editorId = actor.id;
       next.editorName = actor.name;
+      return next;
+    }
+    case ACTIONS.COMPLETE_ASSIST: {
+      assertStage(task, [STAGES.ASSISTING], action);
+      const next = move(task, STAGES.ASSIST_DONE, actor, action, now, { note: payload.note });
+      next.completedAt = new Date(now).toISOString();
+      next.archived = true;
+      next.readOnly = true;
+      next.reminderEnabled = false;
       return next;
     }
     case ACTIONS.SHOOT_COMPLETE: {
@@ -318,9 +379,14 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
     case ACTIONS.REJECT:
       assertStage(task, [STAGES.INITIAL_REVIEW, STAGES.DIRECTOR_REVIEW], action);
       return move(task, STAGES.MODIFYING, actor, action, now, { note: payload.note });
-    case ACTIONS.PUBLISH:
+    case ACTIONS.PUBLISH: {
       assertStage(task, [STAGES.READY_PUBLISH], action);
-      return move(task, STAGES.PUBLISHED, actor, action, now, { note: payload.note, metadata: { url: payload.url || "" } });
+      const next = move(task, STAGES.PUBLISHED, actor, action, now, { note: payload.note, metadata: { url: payload.url || "" } });
+      next.archived = true;
+      next.readOnly = true;
+      next.reminderEnabled = false;
+      return next;
+    }
     case ACTIONS.PAUSE: {
       assertStage(task, Object.values(STAGES).filter((stage) => ![STAGES.PAUSED, STAGES.PUBLISHED, STAGES.CANCELLED].includes(stage)), action);
       if (!payload.note?.trim()) throw new Error("暂停任务必须填写原因");
@@ -346,6 +412,7 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
     }
     case ACTIONS.RESCHEDULE: {
       if (!payload.publishAt || !payload.note?.trim()) throw new Error("改期必须填写新发布时间和原因");
+      if (task.requestType && task.requestType !== "video") throw new Error("协助需求改期请重新创建对应时段");
       const template = payload.templates?.find((item) => item.level === task.level);
       const next = structuredClone(task);
       next.publishAt = normalizePublishAt(payload.publishAt);
@@ -395,7 +462,7 @@ export function taskIsRelatedToUser(task, user) {
     return task.editorId === user.id || events.some((event) => event.action === ACTIONS.CLAIM && event.actorId === user.id);
   }
   if (user.role === "director") {
-    const createEvents = events.filter((event) => event.action === ACTIONS.CREATE);
+    const createEvents = events.filter((event) => [ACTIONS.CREATE, ACTIONS.CREATE_ASSIST].includes(event.action));
     return createEvents.length ? createEvents.some((event) => event.actorId === user.id) : task.directorId === user.id;
   }
   return false;
@@ -414,7 +481,7 @@ export function deadlineForCurrentStage(task) {
 }
 
 export function taskBucket(task, user, now = new Date()) {
-  if ([STAGES.PUBLISHED, STAGES.CANCELLED].includes(task.currentStage)) return "done";
+  if ([STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED].includes(task.currentStage)) return "done";
   if (!canAct(task, user)) return "waiting";
   const deadline = new Date(deadlineForCurrentStage(task)).getTime();
   const nowMs = new Date(now).getTime();
@@ -430,7 +497,7 @@ export function evaluateReminders(tasks, records, settings, now = new Date()) {
   const existing = new Set(records.map((record) => record.dedupeKey));
   const output = [];
   for (const task of tasks) {
-    if (!task.reminderEnabled || task.archived || [STAGES.PUBLISHED, STAGES.CANCELLED, STAGES.PAUSED].includes(task.currentStage)) continue;
+    if (!task.reminderEnabled || task.archived || [STAGES.PUBLISHED, STAGES.ASSIST_DONE, STAGES.CANCELLED, STAGES.PAUSED].includes(task.currentStage)) continue;
     const deadline = new Date(deadlineForCurrentStage(task)).getTime();
     const start = new Date(task.stageStartedAt).getTime();
     if (!Number.isFinite(deadline) || !Number.isFinite(start)) continue;
