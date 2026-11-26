@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ACTIONS, STAGES, applyAction, buildDeadlines, consolidateLegacyAssistanceTasks, createAssistanceTask, createTask,
-  evaluateReminders, migrateLegacyTask, taskBucket, taskIsRelatedToUser, validateTemplate
+  ACTIONS, STAGES, applyAction, buildDeadlines, canAct, consolidateLegacyAssistanceTasks, createAssistanceTask, createTask,
+  evaluateReminders, getResponsible, migrateLegacyTask, taskBucket, taskIsRelatedToUser, validateTemplate
 } from "../dist/domain.js";
 
 const director = { id: "director", name: "编导", role: "director" };
@@ -35,13 +35,31 @@ test("拍摄与出镜协助同日多时段合为一条需求，认领完成并�
   assert.equal(taskIsRelatedToUser(task, editor), true);
   assert.equal(task.events.at(-1).metadata.plannedDeadline, "2026-11-20T01:30:00.000Z");
   assert.equal(task.events.at(-1).metadata.responsibleName, "剪辑认领池");
-  assert.throws(() => applyAction(task, ACTIONS.COMPLETE_ASSIST, { id: "other", role: "editor" }, {}, now), /只有已认领协助人员/);
-  task = applyAction(task, ACTIONS.COMPLETE_ASSIST, editor, { note: "现场完成" }, new Date("2026-11-20T04:00:00Z"));
+  assert.equal(getResponsible(task).id, director.id);
+  assert.equal(canAct(task, director), true);
+  assert.equal(canAct(task, editor), false);
+  assert.equal(taskBucket(task, editor, now), "waiting");
+  assert.throws(() => applyAction(task, ACTIONS.COMPLETE_ASSIST, editor, {}, now), /只有需求下发人/);
+  assert.throws(() => applyAction(task, ACTIONS.COMPLETE_ASSIST, { id: "admin", role: "admin" }, {}, now), /只有需求下发人/);
+  task = applyAction(task, ACTIONS.COMPLETE_ASSIST, director, { note: "现场完成" }, new Date("2026-11-20T04:00:00Z"));
   assert.equal(task.currentStage, STAGES.ASSIST_DONE);
   assert.equal(task.completedAt, "2026-11-20T04:00:00.000Z");
-  assert.equal(task.events.at(-1).metadata.responsibleName, editor.name);
+  assert.equal(task.events.at(-1).metadata.responsibleName, director.name);
   assert.equal(task.readOnly, true);
   assert.throws(() => applyAction(task, ACTIONS.CANCEL, director, { note: "取消" }, now), /已结束任务不可修改/);
+});
+
+test("协助承接人转交后，完成确认仍由原下发人执行", () => {
+  let task = createAssistanceTask({ requestType: "acting", account: "丝丝", serviceDate: "2026-11-20", timeSlots: ["12:30-15:30"] }, director, now);
+  task = applyAction(task, ACTIONS.CLAIM, editor, {}, now);
+  const otherEditor = { id: "other_editor", name: "新承接剪辑", role: "editor" };
+  task = applyAction(task, ACTIONS.TRANSFER, director, { user: otherEditor, note: "排班调整" }, now);
+  assert.equal(task.editorId, otherEditor.id);
+  assert.equal(getResponsible(task).id, director.id);
+  assert.equal(canAct(task, otherEditor), false);
+  assert.throws(() => applyAction(task, ACTIONS.COMPLETE_ASSIST, otherEditor, {}, now), /只有需求下发人/);
+  task = applyAction(task, ACTIONS.COMPLETE_ASSIST, director, {}, now);
+  assert.equal(task.currentStage, STAGES.ASSIST_DONE);
 });
 
 test("协助需求校验日期与时段", () => {

@@ -8,7 +8,7 @@ export const EXPORT_COLUMNS = [
 ];
 
 const ROLE_LABELS = { director: "编导", editor: "剪辑", reviewer: "中台审核", admin: "管理员" };
-const NODE_ROLES = { editor_pool: "剪辑认领池", shooter: "拍摄负责人", director: "编导", editor: "剪辑 / 协助", reviewer: "中台审核" };
+const NODE_ROLES = { editor_pool: "剪辑认领池", shooter: "拍摄负责人", director: "编导", editor: "剪辑 / 协助", reviewer: "中台审核", issuer: "需求下发人" };
 
 function safeCell(value) {
   const text = String(value ?? "");

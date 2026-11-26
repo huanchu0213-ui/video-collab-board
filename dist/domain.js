@@ -26,7 +26,7 @@ export const STAGE_META = {
   [STAGES.MODIFYING]: { label: "修改中", action: "提交修改", owner: "editor" },
   [STAGES.READY_PUBLISH]: { label: "待发布", action: "确认发布", owner: "director" },
   [STAGES.PUBLISHED]: { label: "已发布", action: "已完成", owner: "director" },
-  [STAGES.ASSISTING]: { label: "协助进行中", action: "确认协助完成", owner: "editor" },
+  [STAGES.ASSISTING]: { label: "协助进行中", action: "确认协助完成", owner: "issuer" },
   [STAGES.ASSIST_DONE]: { label: "协助已完成", action: "已完成", owner: "editor" },
   [STAGES.PAUSED]: { label: "已暂停", action: "恢复任务", owner: "director" },
   [STAGES.CANCELLED]: { label: "已取消", action: "已取消", owner: "director" }
@@ -240,6 +240,7 @@ export function createAssistanceTask(input, actor, now = new Date()) {
     serviceDate, timeSlots: slots, timeSlot: slots.join("、"), startsAt, endsAt, publishAt: endsAt,
     currentStage: STAGES.WAITING_CLAIM, previousStage: null,
     directorId: actor.id, directorName: actor.name, editorId: null, editorName: null,
+    issuerId: actor.id, issuerName: actor.name,
     reviewerId: null, reviewerName: "", shooterId: null, shooterName: "",
     requiresInitialReview: false, needsShoot: false, scriptUrl: "", materialUrl: "",
     materialMethod: "", materialNote: "", materialAttachments: [], versions: [], scheduleIntervals: {},
@@ -322,13 +323,13 @@ function move(task, toStage, actor, action, now, payload = {}) {
 
 function authorizeAction(task, action, actor) {
   if (!actor) throw new Error("无法识别当前用户");
+  if (action === ACTIONS.COMPLETE_ASSIST && actor.id !== getIssuer(task).id) throw new Error("只有需求下发人可以确认协助完成");
   if (actor.role === "admin") return;
   const directorActions = [ACTIONS.PAUSE, ACTIONS.RESUME, ACTIONS.CANCEL, ACTIONS.RESCHEDULE, ACTIONS.TRANSFER, ACTIONS.PUBLISH];
   if (action === ACTIONS.CLAIM && actor.role !== "editor") throw new Error("只有剪辑可以认领任务");
   if (action === ACTIONS.SHOOT_COMPLETE && ![task.shooterId, task.directorId].includes(actor.id)) throw new Error("只有拍摄负责人或编导可以确认拍摄");
   if (action === ACTIONS.MATERIAL_READY && ![task.shooterId, task.directorId].includes(actor.id)) throw new Error("只有素材负责人或编导可以确认素材");
   if (action === ACTIONS.SUBMIT_CUT && actor.id !== task.editorId) throw new Error("只有已认领剪辑可以提交成片");
-  if (action === ACTIONS.COMPLETE_ASSIST && actor.id !== task.editorId) throw new Error("只有已认领协助人员可以确认完成");
   if ([ACTIONS.APPROVE, ACTIONS.REJECT].includes(action)) {
     const expected = task.currentStage === STAGES.INITIAL_REVIEW ? task.reviewerId : task.directorId;
     if (actor.id !== expected) throw new Error("只有当前审核负责人可以处理审核");
@@ -466,9 +467,11 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
     }
     case ACTIONS.TRANSFER: {
       if (!payload.user?.id || !payload.note?.trim()) throw new Error("转交必须选择负责人并填写原因");
+      if (task.requestType && task.requestType !== "video" && task.currentStage !== STAGES.ASSISTING) throw new Error("协助需求认领后才能转交承接人");
+      if (task.requestType && task.requestType !== "video" && payload.user.role !== "editor") throw new Error("协助承接人必须是剪辑");
       const next = structuredClone(task);
       const owner = STAGE_META[task.currentStage]?.owner;
-      if (owner === "editor") {
+      if (owner === "editor" || owner === "issuer") {
         next.editorId = payload.user.id;
         next.editorName = payload.user.name;
       } else if (owner === "reviewer") {
@@ -487,9 +490,19 @@ export function applyAction(task, action, actor, payload = {}, now = new Date())
   }
 }
 
+export function getIssuer(task) {
+  const created = (task.events || []).find((event) => event.action === ACTIONS.CREATE_ASSIST);
+  return {
+    id: task.issuerId || created?.actorId || task.directorId,
+    name: task.issuerName || created?.actorName || task.directorName || "需求下发人",
+    kind: "user"
+  };
+}
+
 export function getResponsible(task) {
   const owner = STAGE_META[task.currentStage]?.owner;
   if (owner === "editor_pool") return { id: "editor_pool", name: "剪辑认领池", kind: "group" };
+  if (owner === "issuer") return getIssuer(task);
   if (owner === "editor") return { id: task.editorId, name: task.editorName || "待指定剪辑", kind: "user" };
   if (owner === "reviewer") return { id: task.reviewerId || "review_pool", name: task.reviewerName || "中台审核人", kind: "user" };
   if (owner === "shooter") return { id: task.shooterId, name: task.shooterName || task.directorName, kind: "user" };
@@ -512,6 +525,7 @@ export function taskIsRelatedToUser(task, user) {
 
 export function canAct(task, user) {
   if (!user || task.readOnly || task.archived) return false;
+  if (task.currentStage === STAGES.ASSISTING && task.requestType && task.requestType !== "video") return getIssuer(task).id === user.id;
   if (user.role === "admin") return true;
   const responsible = getResponsible(task);
   if (task.currentStage === STAGES.WAITING_CLAIM) return user.role === "editor";

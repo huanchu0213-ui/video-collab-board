@@ -40,3 +40,14 @@ test("改期操作不会被导出为节点完成时间", () => {
   assert.equal(row[13], "");
   assert.equal(row[18], "2026-11-19T02:00:00.000Z");
 });
+
+test("协助完成导出下发人作为节点负责人，保留承接剪辑", () => {
+  let assist = createAssistanceTask({ requestType: "shooting", account: "万万", serviceDate: "2026-11-20", timeSlots: ["09:30-12:30"] }, director, createdAt);
+  assist = applyAction(assist, ACTIONS.CLAIM, editor, {}, createdAt);
+  assist = applyAction(assist, ACTIONS.COMPLETE_ASSIST, director, {}, new Date("2026-11-20T04:00:00Z"));
+  const row = exportRows([assist], "2026-11-20", "2026-11-20").find((item) => item[15] === "确认协助完成");
+  assert.equal(row[8], editor.name);
+  assert.equal(row[11], director.name);
+  assert.equal(row[14], director.name);
+  assert.equal(row[19], "需求下发人");
+});

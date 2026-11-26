@@ -10,7 +10,7 @@ const [domainModule, storeModule, adapterModule, scheduleModule, exportModule] =
 const {
   ACTIONS, ASSISTANCE_SLOTS, STAGES, STAGE_META, TEMPLATE_INTERVAL_LABELS, TEMPLATE_STAGE_ORDER,
   applyAction, assistanceSlots, canAct, createAssistanceTask, createTask, deadlineForCurrentStage, evaluateReminders,
-  getResponsible, requestTypeLabel, taskIsRelatedToUser, validateTemplate
+  getIssuer, getResponsible, requestTypeLabel, taskIsRelatedToUser, validateTemplate
 } = domainModule;
 const { USERS, currentUser, loadState, resetState, saveState, stageLabel } = storeModule;
 const { createIdentityAdapter, createReminderAdapter } = adapterModule;
@@ -54,7 +54,7 @@ function isAssistance(task) {
 }
 
 function taskBadge(task) {
-  return isAssistance(task) ? `<span class="level assist-badge">${requestTypeLabel(task.requestType)}</span>` : levelBadge(task.level);
+  return isAssistance(task) ? `<span class="level assist-badge assist-${task.requestType}">${requestTypeLabel(task.requestType)}</span>` : levelBadge(task.level);
 }
 
 function taskScheduleLabel(task) {
@@ -453,7 +453,7 @@ function renderClaimPool() {
     .sort((left, right) => new Date(deadlineForCurrentStage(left)) - new Date(deadlineForCurrentStage(right)));
   return `<section class="claim-pool" aria-label="剪辑认领池">
     <header><div><span class="eyebrow">CLAIM POOL</span><h3>剪辑认领池 <em>${tasks.length}</em></h3><p>按认领截止时间排序，包含视频剪辑及拍摄／出镜协助</p></div></header>
-    <div class="claim-pool-list" ${tasks.length > 4 ? 'tabindex="0" aria-label="待认领任务列表"' : ""}>${tasks.length ? tasks.map((task) => `<article class="claim-pool-item"><div class="claim-pool-title">${taskBadge(task)}<strong>${escapeHtml(task.title)}</strong></div><p>${escapeHtml(task.account)} · 编导 ${escapeHtml(task.directorName || "待指定")} · ${taskScheduleLabel(task)}</p><span class="${isOverdue(task) ? "is-overdue" : ""}">认领截止 ${formatDate(deadlineForCurrentStage(task))}</span><button class="quick-button" data-task-action="${ACTIONS.CLAIM}" data-task-id="${task.id}">认领</button></article>`).join("") : `<div class="empty-inline">目前没有待认领任务</div>`}</div>
+    <div class="claim-pool-list" ${tasks.length > 4 ? 'tabindex="0" aria-label="待认领任务列表"' : ""}>${tasks.length ? tasks.map((task) => `<article class="claim-pool-item"><div class="claim-pool-title">${taskBadge(task)}<strong>${escapeHtml(task.title)}</strong></div><p>${escapeHtml(task.account)} · ${isAssistance(task) ? "下发人" : "编导"} ${escapeHtml(isAssistance(task) ? getIssuer(task).name : task.directorName || "待指定")} · ${taskScheduleLabel(task)}</p><span class="${isOverdue(task) ? "is-overdue" : ""}">认领截止 ${formatDate(deadlineForCurrentStage(task))}</span><button class="quick-button" data-task-action="${ACTIONS.CLAIM}" data-task-id="${task.id}">认领</button></article>`).join("") : `<div class="empty-inline">目前没有待认领任务</div>`}</div>
   </section>`;
 }
 
@@ -625,7 +625,7 @@ function renderDrawer() {
   const action = primaryAction(task);
   return `<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" aria-label="任务详情">
     <header class="drawer-header"><div><div class="drawer-badges">${taskBadge(task)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${isAssistance(task) ? taskScheduleLabel(task) : task.needsShoot ? "待拍摄素材" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
-    <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div><small>${isAssistance(task) ? "承接协助" : "承接剪辑"}</small><strong>${escapeHtml(task.editorName || "待认领")}</strong></div><div><small>负责编导</small><strong>${escapeHtml(task.directorName || "待指定")}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${[STAGES.ASSIST_DONE, STAGES.PUBLISHED].includes(task.currentStage) ? "已完成" : relativeTime(deadline)}</span></div></div>
+    <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div><small>${isAssistance(task) ? "承接协助" : "承接剪辑"}</small><strong>${escapeHtml(task.editorName || "待认领")}</strong></div><div><small>${isAssistance(task) ? "任务下发人" : "负责编导"}</small><strong>${escapeHtml(isAssistance(task) ? getIssuer(task).name : task.directorName || "待指定")}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${[STAGES.ASSIST_DONE, STAGES.PUBLISHED].includes(task.currentStage) ? "已完成" : relativeTime(deadline)}</span></div></div>
     <div class="progress-track">${renderProgress(task)}</div>
     ${isAssistance(task) ? "" : `<section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>`}
     <section class="drawer-section"><div class="section-title"><h3>操作时间轴</h3><span>${task.events.length} 条记录</span></div><div class="timeline">${[...task.events].reverse().map(renderEvent).join("")}</div></section>
@@ -804,7 +804,7 @@ function renderTemplateModal() {
 
 function actionSpec(task, action) {
   const specs = {
-    [ACTIONS.COMPLETE_ASSIST]: { title: "确认协助完成", desc: "完成后记录协助人和时间，需求将归档", note: "完成备注（可选）", submit: "确认完成" },
+    [ACTIONS.COMPLETE_ASSIST]: { title: "确认协助完成", desc: "由需求下发人确认，记录确认时间后归档", note: "完成备注（可选）", submit: "确认完成" },
     [ACTIONS.SUBMIT_CUT]: { title: task.currentStage === STAGES.MODIFYING ? "提交修改版本" : "提交成片", desc: "选择交片渠道；新版本会保留，不覆盖历史成片", note: "版本说明（可选）", submit: "提交审核" },
     [ACTIONS.PUBLISH]: { title: "确认视频发布", desc: "发布后任务归档，只读保留完整记录", url: "发布链接（可选）", note: "发布备注（可选）", submit: "确认已发布" },
     [ACTIONS.PAUSE]: { title: "暂停任务", desc: "暂停后停止所有提醒，恢复时回到原环节", note: "暂停原因", submit: "确认暂停", danger: true },
@@ -827,13 +827,13 @@ function renderActionModal() {
     return modalShell(`审核 · ${stageLabel(task.currentStage)}`, "备注可选，填写后直接选择审核结果", `<div class="review-preview">${version ? `<span>当前版本 V${version.number}</span><strong>${escapeHtml(task.title)}</strong>${delivery}` : "暂无成片版本"}</div><form id="review-form" class="review-inline-form"><label class="form-field"><span>审核备注（可选）</span><textarea name="note" placeholder="可补充通过说明或需要修改的内容"></textarea></label><div class="review-actions"><button type="submit" class="approve-button" name="reviewAction" value="${ACTIONS.APPROVE}">✓ 通过审核</button><button type="submit" class="reject-button" name="reviewAction" value="${ACTIONS.REJECT}">↩ 退回修改</button></div></form>`);
   }
   if (modal.action === "more") {
-    return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions">${isAssistance(task) ? "" : `<button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button>`}<button data-more-action="transfer" data-task-id="${task.id}"><strong>转交负责人</strong><span>将当前环节移交给其他成员</span></button><button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
+    return modalShell("更多操作", "异常操作必须填写原因并保留记录", `<div class="more-actions">${isAssistance(task) ? "" : `<button data-more-action="reschedule" data-task-id="${task.id}"><strong>调整发布时间</strong><span>重新计算全部未完成节点</span></button>`}${isAssistance(task) && task.currentStage !== STAGES.ASSISTING ? "" : `<button data-more-action="transfer" data-task-id="${task.id}"><strong>${isAssistance(task) ? "转交协助承接人" : "转交负责人"}</strong><span>${isAssistance(task) ? "下发人的完成确认权保持不变" : "将当前环节移交给其他成员"}</span></button>`}<button class="danger" data-review-action="${ACTIONS.CANCEL}" data-task-id="${task.id}"><strong>取消任务</strong><span>停止流程和提醒</span></button></div>`);
   }
   if (modal.action === "reschedule") {
     return modalShell("调整发布日期", "系统将按已确认模板重新计算节点", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.RESCHEDULE}"/><label class="form-field full"><span>新计划发布日期</span><input name="publishAt" type="date" required/></label><label class="form-field full"><span>改期原因</span><textarea name="note" required placeholder="说明为什么需要改期"></textarea></label>${modalFooter("确认改期")}</form>`);
   }
   if (modal.action === "transfer") {
-    return modalShell("转交负责人", "只变更当前环节负责人，不修改历史记录", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.TRANSFER}"/><label class="form-field full"><span>新负责人</span><select name="userId" required><option value="">请选择</option>${activeUsers().map((user) => `<option value="${user.id}">${escapeHtml(user.name)} · ${roleLabel(user.role)}</option>`).join("")}</select></label><label class="form-field full"><span>转交原因</span><textarea name="note" required></textarea></label>${modalFooter("确认转交")}</form>`);
+    return modalShell(isAssistance(task) ? "转交协助承接人" : "转交负责人", isAssistance(task) ? "下发人仍负责确认协助完成，历史记录保留" : "只变更当前环节负责人，不修改历史记录", `<form id="action-form" class="modal-form single"><input type="hidden" name="action" value="${ACTIONS.TRANSFER}"/><label class="form-field full"><span>${isAssistance(task) ? "新承接剪辑" : "新负责人"}</span><select name="userId" required><option value="">请选择</option>${activeUsers().filter((user) => !isAssistance(task) || user.role === "editor").map((user) => `<option value="${user.id}">${escapeHtml(user.name)} · ${roleLabel(user.role)}</option>`).join("")}</select></label><label class="form-field full"><span>转交原因</span><textarea name="note" required></textarea></label>${modalFooter("确认转交")}</form>`);
   }
   if ([ACTIONS.SHOOT_COMPLETE, ACTIONS.MATERIAL_READY].includes(modal.action)) {
     const completesShoot = modal.action === ACTIONS.SHOOT_COMPLETE;
@@ -1014,7 +1014,7 @@ async function handleSubmit(event) {
     const nameById = Object.fromEntries(users.map((user) => [user.id, user.name]));
     const tasks = state.tasks.map((task) => {
       const next = { ...task };
-      [["directorId", "directorName"], ["editorId", "editorName"], ["reviewerId", "reviewerName"], ["shooterId", "shooterName"]].forEach(([idField, nameField]) => {
+      [["directorId", "directorName"], ["issuerId", "issuerName"], ["editorId", "editorName"], ["reviewerId", "reviewerName"], ["shooterId", "shooterName"]].forEach(([idField, nameField]) => {
         if (nameById[next[idField]]) next[nameField] = nameById[next[idField]];
       });
       return next;

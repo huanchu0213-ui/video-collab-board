@@ -604,7 +604,9 @@ body {
 
 @media (prefers-reduced-motion: reduce) { *, *:before, *:after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
 
-.assist-badge { min-width: auto; padding: 0 7px; color: #704426; background: #f5dfbc; white-space: nowrap; }
+.assist-badge { min-width: auto; padding: 0 7px; white-space: nowrap; }
+.assist-shooting { color: #704426; background: #f5dfbc; }
+.assist-acting { color: #424f99; background: #e3e8fc; }
 .create-type-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 18px; padding: 4px; border: 1px solid #e9d9c8; border-radius: 11px; background: #f8efe6; }
 .create-type-tabs button { min-height: 38px; padding: 5px 7px; border: 0; border-radius: 8px; color: #705e4e; background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
 .create-type-tabs button.active { color: #493222; background: #fffdfa; box-shadow: 0 2px 8px rgba(60,37,19,.1); font-weight: 700; }
