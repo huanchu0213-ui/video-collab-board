@@ -119,9 +119,14 @@ function toast(message, type = "success") {
 }
 
 async function productionRequest(path, method = "GET", body) {
-  const response = await fetch(`/api/workflow${path}`, {
+  const basePath = globalThis.__VIDEO_BOARD_BASE_PATH__ || "/";
+  const csrfToken = globalThis.__VIDEO_BOARD_CSRF_TOKEN__ || "";
+  const response = await fetch(`${basePath}api/workflow${path}`, {
     method, credentials: "include",
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers: {
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(csrfToken ? { "X-Suda-Csrf-Token": csrfToken } : {})
+    },
     body: body ? JSON.stringify(body) : undefined
   });
   const result = await response.json().catch(() => ({}));
@@ -709,7 +714,11 @@ function renderFiles(task) {
     const meta = [version.deliveryMethod, version.deliveryNote, `${version.submittedBy} · ${formatDate(version.submittedAt)}`].filter(Boolean).join(" · ");
     return `<div class="file-row cut-row"><span>V${version.number}</span><div><strong>成片 V${version.number}${version.attachment ? ` · ${escapeHtml(version.attachment.name)}` : ""}</strong><small>${escapeHtml(meta)}</small></div>${version.attachment?.dataUrl ? `<button type="button" class="file-preview-button" data-preview-task="${task.id}" data-preview-kind="version" data-preview-index="${index}">预览附件</button>` : ""}</div>`;
   });
-  const linkedRows = linkedFiles.map((file) => `<a class="file-row" href="${escapeHtml(file.url)}" target="_blank" rel="noopener"><span>${file.type}</span><div><strong>${escapeHtml(file.label)}</strong><small>${escapeHtml(file.meta || "点击打开链接")}</small></div>${icon("link")}</a>`);
+  const linkedRows = linkedFiles.map((file) => {
+    const url = productionMode && file.url.startsWith("/api/")
+      ? `${globalThis.__VIDEO_BOARD_BASE_PATH__ || "/"}${file.url.slice(1)}` : file.url;
+    return `<a class="file-row" href="${escapeHtml(url)}" target="_blank" rel="noopener"><span>${file.type}</span><div><strong>${escapeHtml(file.label)}</strong><small>${escapeHtml(file.meta || "点击打开链接")}</small></div>${icon("link")}</a>`;
+  });
   return [...materialRows, ...cutRows, ...linkedRows].filter(Boolean).join("") || `<div class="empty-inline">尚未添加交付文件</div>`;
 }
 
