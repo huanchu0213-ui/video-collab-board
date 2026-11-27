@@ -6,11 +6,11 @@ const STORAGE_KEY = "video-collab-board:v1";
 const DEFAULT_ACCOUNTS = ["万万", "丝丝", "周周", "西西", "女团集合号"];
 const DEFAULT_MATERIAL_METHODS = ["飞书", "现场传输", "剪映云空间"];
 const DEFAULT_CUT_METHODS = ["剪映云空间", "飞书", "现场传输"];
-const VALID_ROLES = ["director", "editor", "reviewer", "admin"];
+const VALID_ROLES = ["director", "editor", "reviewer", "admin", "viewer"];
 const VALID_VIEWS = ["todo", "board", "admin"];
 
 function defaultPermissions(role) {
-  return role === "admin" ? [...VALID_VIEWS] : ["todo", "board"];
+  return role === "admin" ? [...VALID_VIEWS] : role === "viewer" ? ["board"] : ["todo", "board"];
 }
 
 export const USERS = [
@@ -33,7 +33,7 @@ function normalizeUser(user, index) {
     role,
     avatar: String(user?.avatar || user?.name || "成").trim().slice(0, 1),
     enabled: user?.enabled !== false,
-    permissions: permissions.length ? permissions : ["todo"]
+    permissions: permissions.length ? permissions : defaultPermissions(role)
   };
 }
 
@@ -227,6 +227,14 @@ function normalizeState(parsed) {
 }
 
 export function loadState() {
+  if (globalThis.__VIDEO_BOARD_BOOTSTRAP__) {
+    const boot = globalThis.__VIDEO_BOARD_BOOTSTRAP__;
+    return normalizeState({
+      ...boot.state,
+      currentUserId: boot.user.id,
+      settings: { ...boot.state.settings, identityMode: "feishu" }
+    });
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState();
@@ -240,11 +248,12 @@ export function loadState() {
 
 export function saveState(state) {
   const next = { ...state, revision: (state.revision || 0) + 1 };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  if (!globalThis.__VIDEO_BOARD_PRODUCTION__) localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   return next;
 }
 
 export function resetState() {
+  if (globalThis.__VIDEO_BOARD_PRODUCTION__) throw new Error("正式环境不能恢复演示数据");
   const next = defaultState();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   return next;

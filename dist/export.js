@@ -73,8 +73,9 @@ function milestones(task) {
   const review = (stage) => eventList(task, (event) =>
     [ACTIONS.APPROVE, ACTIONS.REJECT].includes(event.action) && event.fromStage === stage);
   return {
-    created: created || (task.createdAt ? { at: task.createdAt, actorName: "" } : null),
-    claim: first((event) => event.action === ACTIONS.CLAIM),
+    created: created || (task.createdAt ? { at: task.createdAt, actorName: task.issuerName || task.directorName || "" } : null),
+    claim: first((event) => event.action === ACTIONS.CLAIM)
+      || (task.claimedAt ? { at: task.claimedAt, actorName: task.editorName || "" } : null),
     shoot: first((event) => event.action === ACTIONS.SHOOT_COMPLETE),
     material: first((event) => event.action === ACTIONS.MATERIAL_READY),
     cuts,
@@ -83,6 +84,7 @@ function milestones(task) {
     publish: first((event) => event.action === ACTIONS.PUBLISH)
       || (task.currentStage === STAGES.PUBLISHED && task.completedAt ? { at: task.completedAt, actorName: "" } : null),
     assistDone: first((event) => event.action === ACTIONS.COMPLETE_ASSIST)
+      || (task.currentStage === STAGES.ASSIST_DONE && task.completedAt ? { at: task.completedAt, actorName: "" } : null)
   };
 }
 

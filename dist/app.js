@@ -18,6 +18,9 @@ const { WEEK_GROUPS, chinaDateKey, mondayOf, shiftDate, weekSlices } = scheduleM
 const { exportCsv } = exportModule;
 
 let state = loadState();
+const productionMode = Boolean(globalThis.__VIDEO_BOARD_PRODUCTION__);
+let configRevision = Number(globalThis.__VIDEO_BOARD_BOOTSTRAP__?.configRevision || 0);
+let configSaveQueue = Promise.resolve();
 if (!canAccessView(currentUser(state), state.activeView)) state.activeView = firstAccessibleView(currentUser(state));
 let filters = { query: "", level: "all", owner: "all", risk: "all", date: "all", start: "", end: "" };
 let todoFilters = { date: "all", status: "all", start: "", end: "" };
@@ -115,9 +118,43 @@ function toast(message, type = "success") {
   setTimeout(() => { node.classList.remove("show"); setTimeout(() => node.remove(), 220); }, 2600);
 }
 
+async function productionRequest(path, method = "GET", body) {
+  const response = await fetch(`/api/workflow${path}`, {
+    method, credentials: "include",
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.message || result.error || `服务返回 ${response.status}`);
+  return result;
+}
+
+async function refreshProductionState() {
+  const boot = await productionRequest("/bootstrap");
+  globalThis.__VIDEO_BOARD_BOOTSTRAP__ = boot;
+  configRevision = boot.configRevision;
+  const activeView = state.activeView;
+  state = loadState();
+  state.activeView = canAccessView(currentUser(state), activeView) ? activeView : firstAccessibleView(currentUser(state));
+  render();
+}
+
+function queueProductionConfig(next) {
+  const snapshot = { templates: next.templates, settings: next.settings, users: next.users };
+  configSaveQueue = configSaveQueue.then(async () => {
+    const saved = await productionRequest("/config", "PUT", { ...snapshot, revision: configRevision });
+    configRevision = saved.revision;
+  }).catch(async (error) => {
+    toast(`设置未保存：${error.message}`, "error");
+    await refreshProductionState();
+  });
+}
+
 function persist(next = state) {
+  const configChanged = next.templates !== state.templates || next.settings !== state.settings || next.users !== state.users;
   state = saveState(next);
   render();
+  if (productionMode && configChanged) queueProductionConfig(state);
 }
 
 function readAttachment(file) {
@@ -132,7 +169,7 @@ function readAttachment(file) {
 }
 
 function roleLabel(role) {
-  return ({ director: "编导", editor: "剪辑", reviewer: "中台审核", admin: "管理员" })[role] || role;
+  return ({ director: "编导", editor: "剪辑", reviewer: "中台审核", admin: "管理员", viewer: "只读" })[role] || role;
 }
 
 function configuredUsers() {
@@ -194,7 +231,7 @@ function renderShell(content) {
           <div><h1>${title}</h1><p>${subtitle}</p></div>
           <div class="top-actions">
             <button class="mobile-identity-button" ${manualIdentity ? 'data-action="switch-user"' : "disabled"} title="${manualIdentity ? "切换手动身份" : "身份由飞书 SSO 自动识别"}" aria-label="${manualIdentity ? "切换手动身份" : "飞书 SSO 身份"}，当前为${escapeHtml(user.name)}"><span>${escapeHtml(user.avatar || user.name.slice(0, 1))}</span><small>${manualIdentity ? "切换身份" : "SSO 身份"}</small></button>
-            <div class="sync-pill"><span></span> 本地已同步</div>
+            <div class="sync-pill"><span></span> ${productionMode ? "团队数据已同步" : "本地已同步"}</div>
             <button class="activity-trigger" data-action="open-activity" title="查看团队操作记录"><span class="activity-full">操作记录</span><span class="activity-short">记录</span></button>
             ${["director", "admin"].includes(user.role) ? `<button class="primary-button" data-action="open-create">${icon("plus")} 新建需求</button>` : ""}
           </div>
@@ -592,11 +629,11 @@ function renderAdmin() {
         <div class="template-list">${state.templates.map(renderTemplate).join("")}</div>
       </div>
       <aside class="admin-side">
-        <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady ? "" : "disabled"}/><i></i></label><button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div></section>
+        <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>${productionMode ? "飞书消息服务尚未接入，自动提醒暂不可用。" : "模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。"}</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady && !productionMode ? "" : "disabled"}/><i></i></label>${productionMode ? "" : `<button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div>`}</section>
         <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号、素材给予方式和交片渠道，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>交片渠道</strong><div class="catalog-chips">${state.settings.cutDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
-        <section class="settings-card"><div class="settings-icon">${icon("user")}</div><h3>平台权限与身份</h3><p>手动维护身份、角色与页面权限，也可切换为飞书 SSO 自动识别。</p><dl class="config-list"><div><dt>身份模式</dt><dd>${manualIdentity ? "手动配置" : "飞书 SSO"}</dd></div><div><dt>启用身份</dt><dd>${enabledUsers.length} 人</dd></div><div><dt>后台管理员</dt><dd>${enabledUsers.filter((user) => canAccessView(user, "admin")).length} 人</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl><button class="secondary-button full" data-action="open-access-settings">管理平台权限与身份</button></section>
-        <section class="settings-card"><div class="settings-icon">${icon("calendar")}</div><h3>需求节点数据导出</h3><p>按视频计划发布日期或协助服务日期筛选。一条需求一行，横向查看各节点完成时间与操作人；多轮修改会展开为多组列。时间均为北京时间，当前仅导出本浏览器的数据。</p><form id="export-form" class="export-form"><label>开始日期<input name="start" type="date" value="${exportDates.start}" required /></label><label>结束日期<input name="end" type="date" value="${exportDates.end}" required /></label><button class="secondary-button full" type="submit">导出 CSV</button></form></section>
-        <button class="danger-link" data-action="reset-demo">恢复演示数据</button>
+        <section class="settings-card"><div class="settings-icon">${icon("user")}</div><h3>平台权限与身份</h3><p>${productionMode ? "飞书 SSO 自动识别身份，管理员可维护成员角色与页面权限。" : "手动维护身份、角色与页面权限，也可切换为飞书 SSO 自动识别。"}</p><dl class="config-list"><div><dt>身份模式</dt><dd>${manualIdentity ? "手动配置" : "飞书 SSO"}</dd></div><div><dt>启用身份</dt><dd>${enabledUsers.length} 人</dd></div><div><dt>后台管理员</dt><dd>${enabledUsers.filter((user) => canAccessView(user, "admin")).length} 人</dd></div><div><dt>数据</dt><dd>${productionMode ? "飞书应用共享" : "演示为浏览器本地"}</dd></div></dl><button class="secondary-button full" data-action="open-access-settings">管理平台权限与身份</button></section>
+        <section class="settings-card"><div class="settings-icon">${icon("calendar")}</div><h3>需求节点数据导出</h3><p>按视频计划发布日期或协助服务日期筛选。一条需求一行，横向查看各节点完成时间与操作人；多轮修改会展开为多组列。时间均为北京时间，${productionMode ? "包含当前团队的共享任务。" : "当前仅导出本浏览器的数据。"}</p><form id="export-form" class="export-form"><label>开始日期<input name="start" type="date" value="${exportDates.start}" required /></label><label>结束日期<input name="end" type="date" value="${exportDates.end}" required /></label><button class="secondary-button full" type="submit">导出 CSV</button></form></section>
+        ${productionMode ? "" : '<button class="danger-link" data-action="reset-demo">恢复演示数据</button>'}
       </aside>
     </section>
   `);
@@ -627,7 +664,7 @@ function renderDrawer() {
     <header class="drawer-header"><div><div class="drawer-badges">${taskBadge(task)}<span>${escapeHtml(task.code)}</span></div><h2>${escapeHtml(task.title)}</h2><p>${escapeHtml(task.account)} · ${isAssistance(task) ? taskScheduleLabel(task) : task.needsShoot ? "待拍摄素材" : "已有素材"}</p></div><button class="icon-button large" data-action="close-drawer">${icon("x")}</button></header>
     <div class="drawer-status"><div><small>当前环节</small><strong>${stageLabel(task.currentStage)}</strong></div><div><small>当前负责人</small><strong>${escapeHtml(responsible.name)}</strong></div><div><small>${isAssistance(task) ? "承接协助" : "承接剪辑"}</small><strong>${escapeHtml(task.editorName || "待认领")}</strong></div><div><small>${isAssistance(task) ? "任务下发人" : "负责编导"}</small><strong>${escapeHtml(isAssistance(task) ? getIssuer(task).name : task.directorName || "待指定")}</strong></div><div class="${isOverdue(task) ? "danger-copy" : ""}"><small>节点截止</small><strong>${formatDate(deadline)}</strong><span>${[STAGES.ASSIST_DONE, STAGES.PUBLISHED].includes(task.currentStage) ? "已完成" : relativeTime(deadline)}</span></div></div>
     <div class="progress-track">${renderProgress(task)}</div>
-    ${isAssistance(task) ? "" : `<section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>`}
+    ${isAssistance(task) && !task.legacyAttachments?.length ? "" : `<section class="drawer-section"><div class="section-title"><h3>交付文件</h3><span>${task.versions.length} 个成片版本</span></div><div class="file-list">${renderFiles(task)}</div></section>`}
     <section class="drawer-section"><div class="section-title"><h3>操作时间轴</h3><span>${task.events.length} 条记录</span></div><div class="timeline">${[...task.events].reverse().map(renderEvent).join("")}</div></section>
     <footer class="drawer-actions">
       ${canAct(task, currentUser(state)) && action ? `<button class="primary-button grow" data-task-action="${action[0]}" data-task-id="${task.id}">${action[1]}</button>` : ""}
@@ -652,7 +689,11 @@ function renderFiles(task) {
   const linkedFiles = [
     task.scriptUrl && { label: "脚本 / Brief", url: task.scriptUrl, type: "DOC" },
     task.materialUrl && { label: "历史素材链接", url: task.materialUrl, type: "RAW" },
-    ...task.versions.filter((version) => version.url).map((version) => ({ label: `成片 V${version.number}`, url: version.url, type: "MP4", meta: `${version.submittedBy} · ${formatDate(version.submittedAt)}` }))
+    ...task.versions.filter((version) => version.url).map((version) => ({ label: `成片 V${version.number}`, url: version.url, type: "MP4", meta: `${version.submittedBy} · ${formatDate(version.submittedAt)}` })),
+    ...(task.legacyAttachments || []).map((attachment) => ({
+      label: attachment.name, url: attachment.url, type: "ATT",
+      meta: `旧版${attachment.category || "任务"}附件 · 点击下载`
+    }))
   ].filter(Boolean);
   const materialRows = [];
   if (task.materialMethod) {
@@ -757,28 +798,28 @@ function renderUserModal() {
 }
 
 function renderAccessModal() {
-  const roles = [["director", "编导"], ["editor", "剪辑"], ["reviewer", "中台审核"], ["admin", "管理员"]];
+  const roles = [["director", "编导"], ["editor", "剪辑"], ["reviewer", "中台审核"], ["admin", "管理员"], ["viewer", "只读"]];
   const views = [["todo", "我的待办"], ["board", "团队看板"], ["admin", "管理后台"]];
   const roleOptions = (selected = "director") => roles.map(([value, label]) => `<option value="${value}" ${value === selected ? "selected" : ""}>${label}</option>`).join("");
   const permissionChecks = (name, permissions = ["todo", "board"]) => views.map(([value, label]) => `<label><input type="checkbox" name="${name}" value="${value}" ${permissions.includes(value) ? "checked" : ""}/><span>${label}</span></label>`).join("");
   const members = configuredUsers().map((user, index) => `
     <div class="access-member-row">
       <span class="access-avatar">${escapeHtml(user.avatar || user.name.slice(0, 1))}</span>
-      <label class="access-field"><span>姓名</span><input name="memberName_${index}" value="${escapeHtml(user.name)}" required maxlength="20" /></label>
+      <label class="access-field"><span>姓名</span><input name="memberName_${index}" value="${escapeHtml(user.name)}" required maxlength="20" ${productionMode ? "readonly" : ""} /></label>
       <label class="access-field"><span>角色</span><select name="memberRole_${index}">${roleOptions(user.role)}</select></label>
       <label class="access-enabled"><input type="checkbox" name="memberEnabled_${index}" ${user.enabled === false ? "" : "checked"}/><span>启用</span></label>
       <div class="access-permissions"><strong>页面权限</strong>${permissionChecks(`memberPermission_${index}`, user.permissions)}</div>
     </div>`).join("");
   return modalShell("平台权限与身份", "角色决定流程操作权，页面权限决定导航入口", `
     <form id="access-form" class="access-form">
-      <label class="form-field"><span>身份识别方式</span><select name="identityMode"><option value="manual" ${state.settings.identityMode === "feishu" ? "" : "selected"}>手动身份</option><option value="feishu" ${state.settings.identityMode === "feishu" ? "selected" : ""}>飞书 SSO</option></select><small class="field-help">飞书 SSO 模式下不允许手动切换当前身份。</small></label>
+      ${productionMode ? '<input type="hidden" name="identityMode" value="feishu" />' : `<label class="form-field"><span>身份识别方式</span><select name="identityMode"><option value="manual" ${state.settings.identityMode === "feishu" ? "" : "selected"}>手动身份</option><option value="feishu" ${state.settings.identityMode === "feishu" ? "selected" : ""}>飞书 SSO</option></select><small class="field-help">飞书 SSO 模式下不允许手动切换当前身份。</small></label>`}
       <div class="access-section-title"><strong>已配置身份</strong><span>${configuredUsers().length} 人</span></div>
       <div class="access-member-list">${members}</div>
-      <div class="access-add-member">
+      ${productionMode ? '<p class="field-help">新增成员请先加入飞书应用名册，再在这里分配角色。</p>' : `<div class="access-add-member">
         <div class="access-section-title"><strong>新增身份（可选）</strong><span>保存后可继续新增</span></div>
         <div class="access-add-grid"><label class="access-field"><span>姓名</span><input name="newMemberName" maxlength="20" placeholder="输入新成员姓名" /></label><label class="access-field"><span>角色</span><select name="newMemberRole">${roleOptions()}</select></label></div>
         <div class="access-permissions"><strong>页面权限</strong>${permissionChecks("newMemberPermission")}</div>
-      </div>
+      </div>`}
       <div class="form-warning">至少保留一位启用中、拥有管理后台权限的管理员，避免平台无法维护。</div>
       ${modalFooter("保存权限与身份")}
     </form>
@@ -868,6 +909,18 @@ function openAction(taskId, action) {
 
 async function performAction(taskId, action, payload) {
   try {
+    if (productionMode) {
+      const task = state.tasks.find((item) => item.id === taskId);
+      if (!task) throw new Error("任务不存在");
+      const result = await productionRequest(`/tasks/${encodeURIComponent(taskId)}/actions`, "POST", {
+        action, payload, revision: task.revision
+      });
+      state = { ...state, tasks: state.tasks.map((item) => item.id === taskId ? result.task : item) };
+      modal = null;
+      render();
+      toast(`${result.task.title}：${stageLabel(result.task.currentStage)}`);
+      return;
+    }
     if (action === ACTIONS.CLAIM && globalThis.navigator?.locks) {
       await navigator.locks.request(`video-board:claim:${taskId}`, async () => {
         const fresh = loadState();
@@ -893,6 +946,7 @@ async function performAction(taskId, action, payload) {
     toast(`${nextTask.title}：${stageLabel(nextTask.currentStage)}`);
   } catch (error) {
     toast(error.message, "error");
+    if (productionMode) refreshProductionState().catch(() => {});
   }
 }
 
@@ -920,12 +974,16 @@ async function handleSubmit(event) {
     event.preventDefault();
     const data = new FormData(event.target);
     try {
-      const task = createAssistanceTask({
+      const input = {
         requestType: modal.requestType, title: data.get("title"), account: data.get("account"),
         serviceDate: data.get("serviceDate"), timeSlots: data.getAll("timeSlots")
-      }, currentUser(state));
+      };
+      const task = productionMode
+        ? (await productionRequest("/tasks", "POST", { input })).task
+        : createAssistanceTask(input, currentUser(state));
       modal = null;
-      persist({ ...state, tasks: [task, ...state.tasks] });
+      if (productionMode) { state = { ...state, tasks: [task, ...state.tasks] }; render(); }
+      else persist({ ...state, tasks: [task, ...state.tasks] });
       toast(`已创建 1 条协助需求，包含 ${task.timeSlots.length} 个时段，等待剪辑认领`);
     } catch (error) { toast(error.message, "error"); }
     return;
@@ -1033,13 +1091,17 @@ async function handleSubmit(event) {
     const data = new FormData(event.target);
     try {
       const reviewer = activeUsers().find((user) => user.role === "reviewer");
-      const task = createTask({
+      const input = {
         title: data.get("title"), account: data.get("account"), level: data.get("level"),
         publishAt: data.get("publishAt"), needsShoot: data.get("materialStatus") === "needs_shoot",
         reviewerId: reviewer?.id || null, reviewerName: reviewer?.name || ""
-      }, currentUser(state), state.templates);
+      };
+      const task = productionMode
+        ? (await productionRequest("/tasks", "POST", { input })).task
+        : createTask(input, currentUser(state), state.templates);
       modal = null;
-      persist({ ...state, tasks: [task, ...state.tasks] });
+      if (productionMode) { state = { ...state, tasks: [task, ...state.tasks] }; render(); }
+      else persist({ ...state, tasks: [task, ...state.tasks] });
       toast("任务已创建并进入剪辑认领池");
     } catch (error) { toast(error.message, "error"); }
     return;
@@ -1207,7 +1269,7 @@ function toggleTemplate(level) {
     if (!validation.valid) { toast(validation.errors[0], "error"); return template; }
     return { ...template, confirmed: true, confirmedBy: currentUser(state).name, updatedAt: new Date().toISOString() };
   });
-  state = saveState({ ...state, templates });
+  persist({ ...state, templates });
   toast(`${level} 级模板${templates.find((item) => item.level === level).confirmed ? "已确认" : "已取消确认"}`);
 }
 
@@ -1217,7 +1279,7 @@ function toggleTemplateEnabled(level) {
     ? { ...template, enabled: template.enabled === false, confirmed: template.enabled === false ? false : template.confirmed, confirmedBy: template.enabled === false ? null : template.confirmedBy }
     : template);
   const next = templates.find((template) => template.level === level);
-  state = saveState({ ...state, templates, settings: { ...state.settings, enabled: false } });
+  persist({ ...state, templates, settings: { ...state.settings, enabled: false } });
   toast(`${level} 级模板已${next.enabled === false ? "停用" : "启用，请重新确认"}`);
 }
 
@@ -1250,8 +1312,7 @@ function handleChange(event) {
     const templates = state.templates.map((template) => template.level === intervalLevel
       ? { ...template, intervals: { ...template.intervals, [intervalStage]: Number(event.target.value) } }
       : template);
-    state = saveState({ ...state, templates });
-    render();
+    persist({ ...state, templates });
   }
 }
 
@@ -1288,8 +1349,16 @@ createIdentityAdapter(state);
 render();
 
 globalThis.addEventListener("storage", (event) => {
+  if (productionMode) return;
   if (event.key === "video-collab-board:v1") {
     state = loadState();
     render();
   }
 });
+
+if (productionMode) {
+  setInterval(() => {
+    if (document.hidden || modal || document.activeElement?.matches("input, textarea, select")) return;
+    refreshProductionState().catch(() => {});
+  }, 30000);
+}

@@ -323,6 +323,7 @@ function move(task, toStage, actor, action, now, payload = {}) {
 
 function authorizeAction(task, action, actor) {
   if (!actor) throw new Error("无法识别当前用户");
+  if (actor.role === "viewer") throw new Error("只读成员不能操作任务");
   if (action === ACTIONS.COMPLETE_ASSIST && actor.id !== getIssuer(task).id) throw new Error("只有需求下发人可以确认协助完成");
   if (actor.role === "admin") return;
   const directorActions = [ACTIONS.PAUSE, ACTIONS.RESUME, ACTIONS.CANCEL, ACTIONS.RESCHEDULE, ACTIONS.TRANSFER, ACTIONS.PUBLISH];
