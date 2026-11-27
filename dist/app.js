@@ -595,7 +595,7 @@ function renderAdmin() {
         <section class="settings-card"><div class="settings-icon">${icon("bell")}</div><h3>飞书提醒</h3><p>模板全部确认后才可开启。演示环境只生成提醒预览，不会发送真实消息。</p><label class="switch-row"><span><strong>启用自动提醒</strong><small>${state.settings.enabled ? "当前已启用" : "当前未启用"}</small></span><input type="checkbox" id="reminder-enabled" ${state.settings.enabled ? "checked" : ""} ${allReady ? "" : "disabled"}/><i></i></label><button class="secondary-button full" data-action="scan-reminders">运行一次提醒扫描</button><div class="reminder-count">已记录 ${state.reminders.length} 条提醒事件</div></section>
         <section class="settings-card"><div class="settings-icon">${icon("settings")}</div><h3>基础选项配置</h3><p>统一维护账号、素材给予方式和交片渠道，前台直接选择，避免名称不一致。</p><div class="catalog-block"><strong>账号 / 达人</strong><div class="catalog-chips">${state.settings.accounts.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>素材给予方式</strong><div class="catalog-chips">${state.settings.materialDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><div class="catalog-block"><strong>交片渠道</strong><div class="catalog-chips">${state.settings.cutDeliveryMethods.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div><button class="secondary-button full" data-action="open-catalogs">管理基础选项</button></section>
         <section class="settings-card"><div class="settings-icon">${icon("user")}</div><h3>平台权限与身份</h3><p>手动维护身份、角色与页面权限，也可切换为飞书 SSO 自动识别。</p><dl class="config-list"><div><dt>身份模式</dt><dd>${manualIdentity ? "手动配置" : "飞书 SSO"}</dd></div><div><dt>启用身份</dt><dd>${enabledUsers.length} 人</dd></div><div><dt>后台管理员</dt><dd>${enabledUsers.filter((user) => canAccessView(user, "admin")).length} 人</dd></div><div><dt>数据</dt><dd>演示为浏览器本地</dd></div></dl><button class="secondary-button full" data-action="open-access-settings">管理平台权限与身份</button></section>
-        <section class="settings-card"><div class="settings-icon">${icon("calendar")}</div><h3>需求节点数据导出</h3><p>按视频计划发布日期或协助服务日期筛选，导出节点负责人、计划截止、实际完成及操作记录。当前仅导出本浏览器的数据。</p><form id="export-form" class="export-form"><label>开始日期<input name="start" type="date" value="${exportDates.start}" required /></label><label>结束日期<input name="end" type="date" value="${exportDates.end}" required /></label><button class="secondary-button full" type="submit">导出 CSV</button></form></section>
+        <section class="settings-card"><div class="settings-icon">${icon("calendar")}</div><h3>需求节点数据导出</h3><p>按视频计划发布日期或协助服务日期筛选。一条需求一行，横向查看各节点完成时间与操作人；多轮修改会展开为多组列。时间均为北京时间，当前仅导出本浏览器的数据。</p><form id="export-form" class="export-form"><label>开始日期<input name="start" type="date" value="${exportDates.start}" required /></label><label>结束日期<input name="end" type="date" value="${exportDates.end}" required /></label><button class="secondary-button full" type="submit">导出 CSV</button></form></section>
         <button class="danger-link" data-action="reset-demo">恢复演示数据</button>
       </aside>
     </section>
@@ -912,7 +912,7 @@ async function handleSubmit(event) {
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast(`已导出 ${count} 条需求的节点记录`);
+      toast(`已导出 ${count} 条需求，每条一行`);
     } catch (error) { toast(error.message, "error"); }
     return;
   }
